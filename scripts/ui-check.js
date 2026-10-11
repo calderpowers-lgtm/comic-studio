@@ -1,0 +1,38 @@
+// Headless browser walkthrough of the UI in mock mode; saves screenshots to sample/ui/.
+import fs from 'node:fs';
+import puppeteer from 'puppeteer-core';
+const URL = process.env.URL || 'http://localhost:5180';
+const out = 'sample/ui'; fs.mkdirSync(out, { recursive: true });
+const browser = await puppeteer.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1600, height: 1000, deviceScaleFactor: 1 });
+page.on('pageerror', (e) => console.error('PAGE ERROR', e.message));
+page.on('console', (m) => m.type() === 'error' && console.error('console:', m.text()));
+await page.goto(URL, { waitUntil: 'networkidle0' });
+const clickText = async (sel, text) => { await page.waitForFunction((s, t) => [...document.querySelectorAll(s)].some((b) => b.textContent.includes(t) && !b.disabled), {}, sel, text); await page.evaluate((s, t) => [...document.querySelectorAll(s)].find((b) => b.textContent.includes(t) && !b.disabled).click(), sel, text); };
+await clickText('button', '+ New');
+await new Promise((r) => setTimeout(r, 800));
+await clickText('button', 'Load example');
+await new Promise((r) => setTimeout(r, 300));
+await page.screenshot({ path: `${out}/1-setup.png` });
+await clickText('button', 'Break down script');
+await page.waitForSelector('.page-card');
+await new Promise((r) => setTimeout(r, 500));
+await page.screenshot({ path: `${out}/2-breakdown.png` });
+await clickText('button', 'Render comic');
+await page.waitForFunction(() => /Render ✓/.test(document.body.innerText), { timeout: 120000 });
+await new Promise((r) => setTimeout(r, 1500));
+await page.screenshot({ path: `${out}/3-comic.png` });
+// click the first balloon on slide 1 and edit its text
+const box = await (await page.$('.page-canvas')).boundingBox();
+await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.08);
+await page.waitForSelector('.inspector section > textarea');
+await page.evaluate(() => { const t = document.querySelector('.inspector section > textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'Neil, 52, has owned this house for nine years and never bought a chair.'); t.dispatchEvent(new Event('input', { bubbles: true })); });
+await new Promise((r) => setTimeout(r, 1200));
+await page.screenshot({ path: `${out}/4-edit-lettering.png` });
+await clickText('.tabs button', 'Cast');
+await new Promise((r) => setTimeout(r, 800));
+await page.screenshot({ path: `${out}/5-cast.png` });
+const id = await page.evaluate(() => localStorage.getItem('cs:last'));
+console.log('project', id);
+await browser.close();
