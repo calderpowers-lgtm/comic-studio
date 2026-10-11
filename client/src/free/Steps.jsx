@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { localPlan, parseReply } from '@shared/localplan.js';
 import { planPrompt, sheetPrompt, panelPrompt, allPrompts, standalonePrompt } from '@shared/chatgpt.js';
 import FreeCanvas from './FreeCanvas.jsx';
+import { BOX_SIZE, BOX_WIDTH } from '@shared/compose.js';
 import { putImage, delImage, getImage, uid, storageProblem } from './storage.js';
 import { ingestImage, looksLikeImage, UploadError } from './ingest.js';
 
@@ -413,7 +414,7 @@ export function FinishStep({ project, update, notify }) {
           {busy && <span className="f-hint">{busy}</span>}
         </div>
         <div className="f-row wrap gap f-lettering-opts">
-          <label>Text size<input type="range" min={0.7} max={1.4} step={0.05} value={L.scale || 1} onChange={(e) => update((p) => ({ ...p, lettering: { ...p.lettering, scale: +e.target.value } }))} /></label>
+          <label>Text size (new boxes)<input type="range" min={0.7} max={1.4} step={0.05} value={L.scale || 1} onChange={(e) => update((p) => ({ ...p, lettering: { ...p.lettering, scale: +e.target.value } }))} /></label>
           <label>Font<select value={L.font} onChange={(e) => update((p) => ({ ...p, lettering: { ...p.lettering, font: e.target.value } }))}><option value="ComicNeueBold">Comic Neue</option><option value="PatrickHand">Patrick Hand</option></select></label>
           <label className="chk"><input type="checkbox" checked={L.uppercase !== false} onChange={(e) => update((p) => ({ ...p, lettering: { ...p.lettering, uppercase: e.target.checked } }))} /> ALL CAPS</label>
         </div>
@@ -458,6 +459,7 @@ function SlideText({ project, pg, i, sel, setSel, editPanel, editItem }) {
           </div>
           <textarea id={`t-${l.id}`} rows={2} value={l.text} placeholder={l.type === 'caption' ? 'Type the narration…' : 'Type what they say…'}
             onFocus={() => setSel({ pageIndex: i, panelId: panel.id, itemId: l.id })} onChange={(e) => editItem(panel.id, l.id, { text: e.target.value })} />
+          {l.type !== 'sfx' && <BoxSize l={l} set={(patch) => editItem(panel.id, l.id, patch)} n={j + 1} />}
           {l.pos && <button className="f-link sm" onClick={() => editItem(panel.id, l.id, { pos: undefined, tail: undefined })}>Put back in place</button>}
         </div>
       ))}
@@ -465,6 +467,26 @@ function SlideText({ project, pg, i, sel, setSel, editPanel, editItem }) {
         <button className="f-ghost" onClick={() => add('caption')}>+ Narration</button>
         <button className="f-ghost" onClick={() => add('speech')}>+ Speech</button>
       </div>
+    </div>
+  );
+}
+
+// Per-box text size (A− / slider / A+) and box width. Defaults follow the global text size.
+const r2 = (v) => Math.round(v * 100) / 100;
+function BoxSize({ l, set, n }) {
+  const size = l.size ?? 1, width = l.width ?? 0.82;
+  const setSize = (v) => set({ size: r2(Math.min(BOX_SIZE.max, Math.max(BOX_SIZE.min, v))) });
+  return (
+    <div className="f-boxsize">
+      <div className="f-sizerow">
+        <button className="f-ghost f-abtn" aria-label={`Smaller text, box ${n}`} disabled={size <= BOX_SIZE.min} onClick={() => setSize(size - 0.1)}><small>A</small>−</button>
+        <input type="range" aria-label={`Text size, box ${n}`} min={BOX_SIZE.min} max={BOX_SIZE.max} step={0.05} value={size} onChange={(e) => setSize(+e.target.value)} />
+        <button className="f-ghost f-abtn" aria-label={`Bigger text, box ${n}`} disabled={size >= BOX_SIZE.max} onClick={() => setSize(size + 0.1)}>A+</button>
+      </div>
+      <label className="f-sizerow"><span>Box width</span>
+        <input type="range" aria-label={`Box width, box ${n}`} min={BOX_WIDTH.min} max={BOX_WIDTH.max} step={0.01} value={width} onChange={(e) => set({ width: r2(+e.target.value) })} />
+      </label>
+      {(l.size != null || l.width != null) && <button className="f-link sm" onClick={() => set({ size: undefined, width: undefined })}>Reset size</button>}
     </div>
   );
 }

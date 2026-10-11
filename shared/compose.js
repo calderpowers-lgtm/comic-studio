@@ -255,6 +255,9 @@ function speakerAnchor(panel, rect, speaker) {
   return [rect.x + rect.w * fx, rect.y + rect.h * fy];
 }
 
+export const BOX_SIZE = { min: 0.6, max: 1.8 };
+export const BOX_WIDTH = { min: 0.35, max: 0.98 };
+const W0 = (rect) => rect.w;
 export function measureItems(ctx, project, panel, rect, opts = {}) {
   const L = project.lettering || {};
   const wavy = (L.balloon || 'wavy') === 'wavy';
@@ -278,10 +281,16 @@ export function measureItems(ctx, project, panel, rect, opts = {}) {
       continue;
     }
     const isCap = it.type === 'caption';
-    const famFont = `${it.type === 'whisper' ? Math.round(fs * 0.9) : it.type === 'shout' ? Math.round(fs * 1.12) : fs}px ${famName}`;
+    // per-box size (multiplier on the global size) and width (share of the slide), clamped so text stays readable and fits
+    const k = Number.isFinite(it.size) ? Math.min(BOX_SIZE.max, Math.max(BOX_SIZE.min, it.size)) : 1;
+    const fsi = Math.max(Math.round(W0(rect) * 0.026), Math.round(fs * k));
+    const famFont = `${it.type === 'whisper' ? Math.round(fsi * 0.9) : it.type === 'shout' ? Math.round(fsi * 1.12) : fsi}px ${famName}`;
     const sz = parseInt(famFont, 10);
-    const maxText = rect.w * (carousel ? 0.82 : isCap ? 0.7 : 0.55);
-    const { lines, width } = layoutText(ctx, text, famFont, maxText);
+    const bwShare = Number.isFinite(it.width) ? Math.min(BOX_WIDTH.max, Math.max(BOX_WIDTH.min, it.width)) : null;
+    const maxText = bwShare ? Math.max(sz * 3, rect.w * bwShare - sz * 1.5) : rect.w * (carousel ? 0.82 : isCap ? 0.7 : 0.55);
+    const lt = layoutText(ctx, text, famFont, maxText);
+    const lines = lt.lines;
+    const width = bwShare ? Math.max(lt.width, Math.min(maxText, lt.width)) : lt.width;
     const lh = sz * 1.13;
     const th = lines.length * lh;
     let bw, bh;

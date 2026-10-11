@@ -227,3 +227,10 @@ label.f-drop, label.f-link { position: relative; }
 .f-textrow textarea { font-family: ComicNeueBold, sans-serif; text-transform: uppercase; font-size: 16px; }
 .f-addtext button { flex: 1; min-height: 46px; font-weight: 650; }
 @media (max-width: 700px) { input, select, textarea { font-size: 16px; } } /* iOS zooms into fields under 16px */
+
+.f-boxsize { display: flex; flex-direction: column; gap: 4px; }
+.f-sizerow { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.f-sizerow input[type=range] { flex: 1; min-width: 0; padding: 0; border: 0; height: 36px; }
+.f-sizerow span { white-space: nowrap; min-width: 74px; }
+.f-abtn { width: 48px; height: 44px; flex: none; padding: 0; font-weight: 800; font-size: 18px; }
+.f-abtn small { font-size: 13px; }
