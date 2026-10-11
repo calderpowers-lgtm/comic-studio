@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { localPlan, parseReply } from '@shared/localplan.js';
 import { planPrompt, sheetPrompt, panelPrompt, allPrompts, standalonePrompt } from '@shared/chatgpt.js';
 import FreeCanvas from './FreeCanvas.jsx';
@@ -403,7 +404,7 @@ export function FinishStep({ project, update, notify }) {
     <>
       <section className="f-card">
         <h2>Check the text, then download</h2>
-        <p className="f-sub">Tap a text box to edit it. Drag it to move it; drag the orange dot to point the tail.</p>
+        <p className="f-sub">Type each slide's words in the boxes under it. Add text with <b>+ Narration</b> or <b>+ Speech</b>. To move a box, tap it on the slide, then drag it.</p>
         {missing > 0 && <div className="f-warn">{missing} slide{missing > 1 ? 's have' : ' has'} no picture yet. They will export blank.</div>}
         <div className="f-row wrap gap">
           <button className="f-primary" disabled={!!busy} onClick={() => run(async () => { const f = await files(); setBusy('Making PDF…'); download(await pdfBlob(project, f.map((x) => x[1])), `${slug(project.title)}.pdf`); notify('PDF downloaded.'); })}>Download PDF</button>
@@ -421,32 +422,49 @@ export function FinishStep({ project, update, notify }) {
         <div className="f-grid big">
           {project.pages.map((pg, i) => (
             <div key={pg.id} className={`f-tile ${sel?.pageIndex === i ? 'sel' : ''}`}>
-              <FreeCanvas project={project} pageIndex={i} editable selection={sel} onSelect={setSel} onMove={(pid, iid, patch) => editItem(pid, iid, patch)} />
+              <FreeCanvas project={project} pageIndex={i} editable selection={sel?.pageIndex === i ? sel : null} onSelect={setSel} onMove={(pid, iid, patch) => editItem(pid, iid, patch)} />
               <div className="f-tile-bar"><b>{i + 1}</b><div className="spacer" />
                 <button className="f-link" onClick={() => run(async () => download(await renderSlideBlob(project, i), slideName(project, i)))}>PNG</button></div>
-              {sel?.pageIndex === i && panel && (
-                <div className="f-editor">
-                  {item ? (
-                    <>
-                      <div className="f-row gap">
-                        <select value={item.type} onChange={(e) => editItem(panel.id, item.id, { type: e.target.value })}>{Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-                        {!['caption', 'sfx'].includes(item.type) && <select value={item.speaker} onChange={(e) => editItem(panel.id, item.id, { speaker: e.target.value, tail: undefined })}><option value="">(no tail)</option>{project.characters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}
-                      </div>
-                      <textarea rows={3} autoFocus value={item.text} onChange={(e) => editItem(panel.id, item.id, { text: e.target.value })} />
-                      <div className="f-row gap"><button className="f-link" onClick={() => editItem(panel.id, item.id, { pos: undefined, tail: undefined })}>Put back</button><div className="spacer" />
-                        <button className="f-link danger" onClick={() => { editPanel(panel.id, (x) => ({ ...x, lettering: x.lettering.filter((l) => l.id !== item.id) })); setSel({ pageIndex: i, panelId: panel.id }); }}>Delete box</button></div>
-                    </>
-                  ) : <p className="f-hint">Tap a text box to edit it, or add one:</p>}
-                  <div className="f-row gap">
-                    <button className="f-link" onClick={() => { const id = uid(); editPanel(panel.id, (x) => ({ ...x, lettering: [...x.lettering, { id, type: 'caption', speaker: '', text: 'New text' }] })); setSel({ pageIndex: i, panelId: panel.id, itemId: id }); }}>+ narration box</button>
-                    <button className="f-link" onClick={() => { const id = uid(); editPanel(panel.id, (x) => ({ ...x, lettering: [...x.lettering, { id, type: 'speech', speaker: x.characters[0] || '', text: 'New line' }] })); setSel({ pageIndex: i, panelId: panel.id, itemId: id }); }}>+ speech</button>
-                  </div>
-                </div>
-              )}
+              <SlideText project={project} pg={pg} i={i} sel={sel} setSel={setSel} editPanel={editPanel} editItem={editItem} />
             </div>
           ))}
         </div>
       </div>
     </>
+  );
+}
+
+// Always-visible text editor under each slide: no need to tap the canvas to type.
+function SlideText({ project, pg, i, sel, setSel, editPanel, editItem }) {
+  const panel = pg.panels[0];
+  const add = (type) => {
+    const id = uid();
+    // flushSync so the new field exists inside this tap; iOS only opens the keyboard for focus() in the same gesture
+    flushSync(() => {
+      editPanel(panel.id, (x) => ({ ...x, lettering: [...x.lettering, type === 'caption' ? { id, type, speaker: '', text: '' } : { id, type, speaker: x.characters[0] || project.characters[0]?.id || '', text: '' }] }));
+      setSel({ pageIndex: i, panelId: panel.id, itemId: id });
+    });
+    document.getElementById(`t-${id}`)?.focus();
+  };
+  const del = (id) => { editPanel(panel.id, (x) => ({ ...x, lettering: x.lettering.filter((l) => l.id !== id) })); setSel({ pageIndex: i, panelId: panel.id }); };
+  return (
+    <div className="f-texts">
+      {panel.lettering.map((l, j) => (
+        <div key={l.id} className={`f-textrow ${sel?.itemId === l.id ? 'on' : ''}`}>
+          <div className="f-row gap">
+            <select aria-label={`Box ${j + 1} type`} value={l.type} onChange={(e) => editItem(panel.id, l.id, { type: e.target.value })}>{Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            {!['caption', 'sfx'].includes(l.type) && project.characters.length > 0 && <select aria-label={`Box ${j + 1} speaker`} value={l.speaker} onChange={(e) => editItem(panel.id, l.id, { speaker: e.target.value, tail: undefined })}><option value="">(no tail)</option>{project.characters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}
+            <button className="f-icon danger" title="Delete this box" aria-label={`Delete box ${j + 1}`} onClick={() => del(l.id)}>×</button>
+          </div>
+          <textarea id={`t-${l.id}`} rows={2} value={l.text} placeholder={l.type === 'caption' ? 'Type the narration…' : 'Type what they say…'}
+            onFocus={() => setSel({ pageIndex: i, panelId: panel.id, itemId: l.id })} onChange={(e) => editItem(panel.id, l.id, { text: e.target.value })} />
+          {l.pos && <button className="f-link sm" onClick={() => editItem(panel.id, l.id, { pos: undefined, tail: undefined })}>Put back in place</button>}
+        </div>
+      ))}
+      <div className="f-row gap f-addtext">
+        <button className="f-ghost" onClick={() => add('caption')}>+ Narration</button>
+        <button className="f-ghost" onClick={() => add('speech')}>+ Speech</button>
+      </div>
+    </div>
   );
 }

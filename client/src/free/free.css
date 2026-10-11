@@ -217,3 +217,13 @@ label.f-drop, label.f-link { position: relative; }
 .f-ask button { flex: 1 1 200px; }
 .f-ask { margin: 12px 0; }
 .f-ask-view img { display: block; max-height: 42vh; max-width: 100%; margin: 0 auto; border-radius: 8px; box-shadow: 0 1px 0 var(--line2); }
+
+/* Finish: inline text editing under each slide */
+.f-texts { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.f-textrow { background: #fff; border: 1px solid var(--line2); border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.f-textrow.on { border-color: #ff4f2e; box-shadow: 0 0 0 1px #ff4f2e; }
+.f-textrow select { width: auto; flex: 1 1 0; min-width: 0; }
+.f-textrow .f-icon { width: 40px; height: 40px; flex: none; font-size: 20px; }
+.f-textrow textarea { font-family: ComicNeueBold, sans-serif; text-transform: uppercase; font-size: 16px; }
+.f-addtext button { flex: 1; min-height: 46px; font-weight: 650; }
+@media (max-width: 700px) { input, select, textarea { font-size: 16px; } } /* iOS zooms into fields under 16px */

@@ -51,6 +51,6 @@ export default function FreeCanvas({ project, pageIndex, selection, onSelect, on
     else onMove(d.h.panelId, d.h.itemId, { tail: { x: (p[0] - r.x) / r.w, y: (p[1] - r.y) / r.h } });
   };
   const up = () => { drag.current = null; };
-  return <canvas ref={ref} width={W} height={H} className="slide-canvas" style={{ aspectRatio: `${W}/${H}`, touchAction: editable ? 'none' : 'auto' }}
-    onPointerDown={(e) => { if (editable) e.currentTarget.setPointerCapture(e.pointerId); down(e); }} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />;
+  return <canvas ref={ref} width={W} height={H} className="slide-canvas" style={{ aspectRatio: `${W}/${H}`, touchAction: editable && selection?.itemId ? 'none' : 'pan-y pinch-zoom' }}
+    onPointerDown={(e) => { if (editable && selection?.itemId) e.currentTarget.setPointerCapture(e.pointerId); down(e); }} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />;
 }
