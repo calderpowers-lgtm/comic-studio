@@ -8,11 +8,17 @@ export default function FreeCanvas({ project, pageIndex, selection, onSelect, on
   const hits = useRef([]);
   const drag = useRef(null);
   const [imgs, setImgs] = useState({});
-  const [fontsOk, setFontsOk] = useState(false);
+  const [fontsOk, setFontsOk] = useState(0);
   const { W, H } = pageSize(project);
   const page = project.pages[pageIndex];
   const imgKey = page.panels.map((p) => p.img || '').join('|');
-  useEffect(() => { ensureFonts().then(() => setFontsOk(true)); }, []);
+  useEffect(() => {
+    // iOS Safari can draw canvas text invisibly while a web font is still loading: redraw once fonts are in
+    ensureFonts().then(() => setFontsOk((v) => v + 1));
+    const again = () => setFontsOk((v) => v + 1);
+    document.fonts?.addEventListener?.('loadingdone', again);
+    return () => document.fonts?.removeEventListener?.('loadingdone', again);
+  }, []);
   useEffect(() => { let live = true; slideImages(project, pageIndex).then((m) => live && setImgs(m)); return () => { live = false; }; }, [imgKey]);
   useEffect(() => {
     const c = ref.current; if (!c) return;
@@ -47,8 +53,10 @@ export default function FreeCanvas({ project, pageIndex, selection, onSelect, on
   const move = (e) => {
     const d = drag.current; if (!d) return;
     const p = pt(e); const r = d.h.rect;
-    if (d.kind === 'item') { if (Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < 6) return; onMove(d.h.panelId, d.h.itemId, { pos: { x: (p[0] - d.dx - r.x) / r.w, y: (p[1] - d.dy - r.y) / r.h } }); }
-    else onMove(d.h.panelId, d.h.itemId, { tail: { x: (p[0] - r.x) / r.w, y: (p[1] - r.y) / r.h } });
+    const cl = (v) => Math.min(1, Math.max(0, v));
+    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
+    if (d.kind === 'item') { if (Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < 6) return; onMove(d.h.panelId, d.h.itemId, { pos: { x: cl((p[0] - d.dx - r.x) / r.w), y: cl((p[1] - d.dy - r.y) / r.h) } }); }
+    else onMove(d.h.panelId, d.h.itemId, { tail: { x: cl((p[0] - r.x) / r.w), y: cl((p[1] - r.y) / r.h) } });
   };
   const up = () => { drag.current = null; };
   return <canvas ref={ref} width={W} height={H} className="slide-canvas" style={{ aspectRatio: `${W}/${H}`, touchAction: editable && selection?.itemId ? 'none' : 'pan-y pinch-zoom' }}

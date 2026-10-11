@@ -272,7 +272,7 @@ export function measureItems(ctx, project, panel, rect, opts = {}) {
       const font = `${sz}px Bangers`;
       const { lines, width } = layoutText(ctx, text, font, rect.w * 0.8);
       const h = lines.length * sz * 0.95;
-      const pos = it.pos || { x: 0.68, y: 0.72 };
+      const pos = it.pos && Number.isFinite(it.pos.x) && Number.isFinite(it.pos.y) ? { x: Math.min(0.95, Math.max(0.05, it.pos.x)), y: Math.min(0.95, Math.max(0.05, it.pos.y)) } : { x: 0.68, y: 0.72 };
       const cx = rect.x + rect.w * pos.x, cy = rect.y + rect.h * pos.y;
       out.push({ it, kind: 'sfx', font, size: sz, lines, cx, cy, w: width, h, bbox: [cx - width / 2, cy - h / 2, width, h] });
       continue;
@@ -290,7 +290,12 @@ export function measureItems(ctx, project, panel, rect, opts = {}) {
     else { bw = width + sz * 1.5; bh = th + sz * 1.05; }
     if (it.type === 'shout') { bw *= 1.12; bh *= 1.18; }
     let cx, cy;
-    if (it.pos) { cx = rect.x + rect.w * it.pos.x; cy = rect.y + rect.h * it.pos.y; }
+    const okPos = it.pos && Number.isFinite(it.pos.x) && Number.isFinite(it.pos.y);
+    if (okPos) {
+      // a box can never leave its slide (an accidental drag on a phone used to push it off-screen)
+      cx = Math.min(rect.x + rect.w - Math.min(bw, rect.w) / 2, Math.max(rect.x + Math.min(bw, rect.w) / 2, rect.x + rect.w * it.pos.x));
+      cy = Math.min(rect.y + rect.h - Math.min(bh, rect.h) / 2, Math.max(rect.y + Math.min(bh, rect.h) / 2, rect.y + rect.h * it.pos.y));
+    }
     else {
       if (isCap && !carousel && !wavy) { cx = rect.x + bw / 2 - (opts.border || 0) / 2; cy = rect.y + bh / 2 - (opts.border || 0) / 2; }
       else {
@@ -305,7 +310,7 @@ export function measureItems(ctx, project, panel, rect, opts = {}) {
     cursorY = cy + bh / 2 + sz * (carousel ? 0.55 : 0.4);
     let tip = null;
     if (!isCap && it.speaker !== undefined && it.type !== 'caption') {
-      if (it.tail) tip = [rect.x + rect.w * it.tail.x, rect.y + rect.h * it.tail.y];
+      if (it.tail && Number.isFinite(it.tail.x) && Number.isFinite(it.tail.y)) tip = [rect.x + rect.w * Math.min(1, Math.max(0, it.tail.x)), rect.y + rect.h * Math.min(1, Math.max(0, it.tail.y))];
       else if (it.speaker) {
         const a = speakerAnchor(panel, rect, it.speaker);
         const len = Math.min(rect.h * (carousel ? 0.3 : 0.2), Math.max(sz * 2.2, a[1] - (cy + bh / 2) - rect.h * 0.07));
