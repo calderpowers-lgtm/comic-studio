@@ -2,7 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { localPlan, parseReply } from '@shared/localplan.js';
 import { planPrompt, sheetPrompt, panelPrompt, allPrompts, standalonePrompt } from '@shared/chatgpt.js';
 import FreeCanvas from './FreeCanvas.jsx';
-import { putImage, delImage, getImage, uid } from './storage.js';
+import { putImage, delImage, getImage, uid, storageProblem } from './storage.js';
+import { ingestImage, looksLikeImage, UploadError } from './ingest.js';
+
+// Read + downscale + store one picked photo; returns the storage key. Throws UploadError with a clear message.
+async function storePhoto(file, prefix, onStatus) {
+  const { blob } = await ingestImage(file, { maxSide: 2160, onStatus });
+  const key = prefix + uid();
+  await putImage(key, blob);
+  return key;
+}
+const errText = (e) => (e instanceof UploadError ? e.message : `Something went wrong: ${e?.message || e}. Try again, or use a screenshot of the picture.`);
 import { copyText, download, zipBlob, allSlideBlobs, pdfBlob, renderSlideBlob, slideName, shareFiles, slug } from './exporters.js';
 
 export const REF_URLS = [1, 2, 3, 4].map((n) => new URL(`./assets/refs/ref-${n}.jpg`, import.meta.url).href);
@@ -173,18 +183,25 @@ export function CastStep({ project, update, notify }) {
   const [urls, setUrls] = useState({});
   useEffect(() => { project.characters.forEach(async (c) => { if (c.sheet && !urls[c.sheet]) { const b = await getImage(c.sheet); if (b) setUrls((u) => ({ ...u, [c.sheet]: URL.createObjectURL(b) })); } }); }, [project.characters]);
   const edit = (id, patch) => update((p) => ({ ...p, characters: p.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
-  const upload = async (c, file) => { const key = 'sheet:' + uid(); await putImage(key, file); if (c.sheet) delImage(c.sheet); edit(c.id, { sheet: key }); notify(`Saved ${c.name}'s sheet.`); };
+  const [err, setErr] = useState('');
+  const upload = async (c, file) => {
+    if (!file) return;
+    setErr('');
+    try { const key = await storePhoto(file, 'sheet:'); if (c.sheet) delImage(c.sheet); edit(c.id, { sheet: key }); notify(`Saved ${c.name}'s sheet.`); }
+    catch (e) { setErr(errText(e)); }
+  };
   return (
     <section className="f-card">
       <h2>Characters <span className="f-opt">optional, but recommended</span></h2>
       <p className="f-sub">A reference sheet per character helps ChatGPT draw them the same way on every slide. In ChatGPT: attach the 4 style images (download them in the next step), paste the prompt, then save the picture and add it here.</p>
       {!project.characters.length && <p className="f-hint">No characters in this plan.</p>}
+      {err && <div className="f-error" role="alert">{err}</div>}
       <div className="f-cast">
         {project.characters.map((c) => (
           <div key={c.id} className="f-char">
             <label className={`f-sheet ${c.sheet ? 'has' : ''}`}>
               {c.sheet && urls[c.sheet] ? <img src={urls[c.sheet]} alt="" /> : <span>+ Add {c.name}'s sheet</span>}
-              <input type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && upload(c, e.target.files[0])} />
+              <input className="f-file" type="file" accept="image/*,.heic,.heif" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; upload(c, f); }} />
             </label>
             <div className="f-char-body">
               <input className="f-name" value={c.name} onChange={(e) => edit(c.id, { name: e.target.value })} />
@@ -261,28 +278,43 @@ export function DrawStep({ project, notify }) {
 
 // ---------------- 5. Pictures ----------------
 export function PicturesStep({ project, update, notify }) {
-  const fileRef = useRef();
-  const replaceRef = useRef();
-  const [replaceIdx, setReplaceIdx] = useState(null);
   const [hover, setHover] = useState(false);
   const [frameOpen, setFrameOpen] = useState(null);
   const [dragFrom, setDragFrom] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
   const setPanel = (i, patch) => update((p) => ({ ...p, pages: p.pages.map((pg, j) => (j === i ? { ...pg, panels: [{ ...pg.panels[0], ...patch }] } : pg)) }));
   const addFiles = async (list) => {
-    const files = [...list].filter((f) => f.type.startsWith('image/')).sort((a, b) => a.lastModified - b.lastModified || a.name.localeCompare(b.name, undefined, { numeric: true }));
-    if (!files.length) return;
-    const keys = [];
-    for (const f of files) { const k = 'img:' + uid(); await putImage(k, f); keys.push(k); }
+    const all = [...(list || [])];
+    if (!all.length) return;
+    const files = all.filter(looksLikeImage).sort((a, b) => a.lastModified - b.lastModified || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const problems = all.filter((f) => !looksLikeImage(f)).map((f) => `“${f.name}” isn't a picture.`);
     const empties = project.pages.filter((pg) => !pg.panels[0].img).length;
-    const used = Math.min(empties, keys.length);
-    keys.slice(used).forEach((k) => delImage(k));
-    update((p) => {
+    const keys = [];
+    setErr('');
+    try {
+      for (let i = 0; i < files.length && keys.length < empties; i++) {
+        setBusy(`Reading photo ${i + 1} of ${Math.min(files.length, empties)}…`);
+        try { keys.push(await storePhoto(files[i], 'img:')); } catch (e) { problems.push(errText(e)); }
+      }
+    } finally { setBusy(''); }
+    if (keys.length) update((p) => {
       let k = 0;
-      return { ...p, pages: p.pages.map((pg) => (pg.panels[0].img || k >= used ? pg : { ...pg, panels: [{ ...pg.panels[0], img: keys[k++], crop: undefined }] })) };
+      return { ...p, pages: p.pages.map((pg) => (pg.panels[0].img || k >= keys.length ? pg : { ...pg, panels: [{ ...pg.panels[0], img: keys[k++], crop: undefined }] })) };
     });
-    notify(used < keys.length ? `Added ${used}. ${keys.length - used} extra picture(s) had no empty slide; use Replace on a slide.` : `Added ${keys.length} picture${keys.length > 1 ? 's' : ''} in order.`);
+    const extra = files.length - Math.min(files.length, empties);
+    if (extra > 0) problems.push(`${extra} extra photo${extra > 1 ? 's' : ''} had no empty slide; use Replace on a slide.`);
+    if (storageProblem) problems.push("This browser won't let the app save pictures (Private Browsing?). Finish and download the comic in this visit.");
+    if (problems.length) setErr(problems.join(' '));
+    if (keys.length) notify(`Added ${keys.length} picture${keys.length > 1 ? 's' : ''} in order.`);
   };
-  const replace = async (i, file) => { const k = 'img:' + uid(); await putImage(k, file); const old = project.pages[i].panels[0].img; setPanel(i, { img: k, crop: undefined }); if (old) delImage(old); };
+  const replace = async (i, file) => {
+    if (!file) return;
+    setErr(''); setBusy('Reading photo…');
+    try { const k = await storePhoto(file, 'img:'); const old = project.pages[i].panels[0].img; setPanel(i, { img: k, crop: undefined }); if (old) delImage(old); }
+    catch (e) { setErr(errText(e)); } finally { setBusy(''); }
+  };
+  const fileInput = (onPick, multiple = false) => <input className="f-file" type="file" accept="image/*,.heic,.heif" multiple={multiple} disabled={!!busy} onChange={(e) => { const fl = [...(e.target.files || [])]; e.target.value = ''; onPick(fl); }} />;
   const swap = (i, j) => update((p) => {
     const a = p.pages.map((pg) => ({ ...pg, panels: [{ ...pg.panels[0] }] }));
     const A = a[i].panels[0], B = a[j].panels[0];
@@ -295,13 +327,14 @@ export function PicturesStep({ project, update, notify }) {
       <section className="f-card">
         <h2>Add the pictures</h2>
         <p className="f-sub">Pick or drop all of ChatGPT's pictures at once. They fill the empty slides in order (oldest first). Each one is cropped to 4:5 automatically.</p>
-        <div className={`f-drop ${hover ? 'hover' : ''}`} onClick={() => fileRef.current.click()}
-          onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
+        <div onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
           onDrop={(e) => { e.preventDefault(); setHover(false); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); }}>
-          <b>Drop pictures here</b><span>or tap to choose · {filled}/{project.pages.length} slides filled</span>
+          <label className={`f-drop ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`}>
+            <b>{busy || '+ Add pictures'}</b><span>{busy ? 'One moment…' : `Tap to choose from Photos (pick several at once) · ${filled}/${project.pages.length} slides filled`}</span>
+            {fileInput(addFiles, true)}
+          </label>
         </div>
-        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-        <input ref={replaceRef} type="file" accept="image/*" hidden onChange={(e) => { if (e.target.files[0] != null && replaceIdx != null) replace(replaceIdx, e.target.files[0]); e.target.value = ''; }} />
+        {err && <div className="f-error" role="alert">{err}</div>}
       </section>
       <div className="f-grid">
         {project.pages.map((pg, i) => {
@@ -312,13 +345,13 @@ export function PicturesStep({ project, update, notify }) {
               onDragStart={() => setDragFrom(i)} onDragEnd={() => setDragFrom(null)}
               onDragOver={(e) => { if (dragFrom != null) e.preventDefault(); }}
               onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (dragFrom != null && dragFrom !== i) swap(dragFrom, i); else if (e.dataTransfer.files.length) replace(i, e.dataTransfer.files[0]); setDragFrom(null); }}>
-              <FreeCanvas project={project} pageIndex={i} onSelect={() => { if (!x.img) { setReplaceIdx(i); replaceRef.current.click(); } }} />
+              <FreeCanvas project={project} pageIndex={i} />
               <div className="f-tile-bar">
                 <b>{i + 1}</b>
                 <button className="f-icon" title="Swap picture with previous slide" disabled={i === 0} onClick={() => swap(i, i - 1)}>←</button>
                 <button className="f-icon" title="Swap picture with next slide" disabled={i === project.pages.length - 1} onClick={() => swap(i, i + 1)}>→</button>
                 <div className="spacer" />
-                <button className="f-link" onClick={() => { setReplaceIdx(i); replaceRef.current.click(); }}>{x.img ? 'Replace' : 'Add'}</button>
+                <label className="f-link">{x.img ? 'Replace' : 'Add'}{fileInput((fl) => replace(i, fl[0]))}</label>
                 {x.img && <button className="f-link" onClick={() => setFrameOpen(frameOpen === i ? null : i)}>Frame</button>}
                 {x.img && <button className="f-icon danger" title="Remove picture" onClick={() => { const old = x.img; setPanel(i, { img: null, crop: undefined }); delImage(old); }}>×</button>}
               </div>

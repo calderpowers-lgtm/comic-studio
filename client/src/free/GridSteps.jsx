@@ -9,6 +9,8 @@ import FreeCanvas from './FreeCanvas.jsx';
 import { getImage, uid } from './storage.js';
 import { download, zipBlob, shareFiles, slug } from './exporters.js';
 import { addSheetImage, redetect, cellsFor, sliceSheet, dropImages } from './slicer.js';
+import { UploadError } from './ingest.js';
+import { storageProblem } from './storage.js';
 
 export const COUNTS = [4, 6, 8, 9, 10];
 export const PROSE_EXAMPLE = `Neil is 52 and has owned a surfboard for eleven years. He has never once been in the ocean.
@@ -193,13 +195,13 @@ function LineEditor({ sheet, cells, onChange, onCommit }) {
 }
 
 function SheetSlot({ project, update, notify, plan, k, total }) {
-  const fileRef = useRef();
   const sheet = project.grid?.sheets?.[k] || null;
   const [url, setUrl] = useState(null);
   const [cells, setCells] = useState([]);
   const [busy, setBusy] = useState('');
   const [hover, setHover] = useState(false);
   const [fix, setFix] = useState(false);
+  const [err, setErr] = useState('');
   const [live, setLive] = useState(null); // lines while dragging (not saved yet)
   const view = live ? { ...sheet, ...live } : sheet;
   const setSheet = (s) => update((p) => { const sheets = [...(p.grid?.sheets || [])]; sheets[k] = s; return { ...p, grid: { ...(p.grid || {}), sheets } }; });
@@ -227,30 +229,37 @@ function SheetSlot({ project, update, notify, plan, k, total }) {
       return out.length;
     } finally { setBusy(''); }
   };
+  const fail = (e) => { console.error(e); setErr(e instanceof UploadError ? e.message : `Something went wrong: ${e?.message || e}. Try again, or use a screenshot of the picture.`); };
   const onFile = async (file) => {
-    if (!file || !file.type.startsWith('image/')) return notify('Please choose a picture.');
-    setBusy('Finding the panels…');
+    if (!file) return;
+    setErr(''); setBusy('Opening the picture…');
     try {
-      const s = await addSheetImage(file, plan);
+      const s = await addSheetImage(file, plan, setBusy);
       if (sheet?.img) dropImages([sheet.img]);
       setSheet(s);
       const n = await slice(s);
       notify(s.method === 'detected' ? `Found all ${n} panels.` : 'Cut evenly. Check the red lines.');
-    } catch (e) { notify(e.message); setBusy(''); }
+      if (storageProblem) setErr("Heads up: this browser won't let the app save pictures (Private Browsing?). Finish and download the comic in this visit.");
+    } catch (e) { fail(e); } finally { setBusy(''); }
   };
-  const commitLines = async () => { const s = { ...sheet, ...live, method: 'manual' }; setLive(null); setSheet(s); await slice(s); };
-  const setGrid = async (rows, cols) => { const s = await redetect(sheet, rows, cols, plan.count); setSheet(s); await slice(s); };
+  const commitLines = async () => { const s = { ...sheet, ...live, method: 'manual' }; setLive(null); setSheet(s); try { setErr(''); await slice(s); } catch (e) { fail(e); } };
+  const setGrid = async (rows, cols) => { try { setErr(''); const s = await redetect(sheet, rows, cols, plan.count); setSheet(s); await slice(s); } catch (e) { fail(e); } };
+  const picker = (children, className) => (
+    <label className={className}>
+      {children}
+      <input className="f-file" type="file" accept="image/*,.heic,.heif" disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFile(f); }} />
+    </label>
+  );
 
   const label = total > 1 ? `Picture ${k + 1} of 2 (slides ${plan.start + 1}–${plan.start + plan.count})` : "ChatGPT's picture";
   return (
     <section className="f-card">
-      <div className="f-row"><h2>{label}</h2><div className="spacer" />{sheet && <button className="f-link" onClick={() => fileRef.current.click()}>Choose another</button>}</div>
-      <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { onFile(e.target.files[0]); e.target.value = ''; }} />
+      <div className="f-row"><h2>{label}</h2><div className="spacer" />{sheet && picker('Choose another', 'f-link')}</div>
+      {err && <div className="f-error" role="alert">{err}</div>}
       {!sheet ? (
-        <div className={`f-drop f-drop-big ${hover ? 'hover' : ''}`} onClick={() => fileRef.current.click()}
-          onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
+        <div onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
           onDrop={(e) => { e.preventDefault(); setHover(false); onFile(e.dataTransfer.files[0]); }}>
-          <b>{busy || '+ Add the picture'}</b><span>Tap to pick it from Photos. Expecting {plan.rows} × {plan.cols} panels.</span>
+          {picker(<><b>{busy || '+ Add the picture'}</b><span>{busy ? 'One moment…' : `Tap to pick it from Photos. Expecting ${plan.rows} × ${plan.cols} panels.`}</span></>, `f-drop f-drop-big ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`)}
         </div>
       ) : (
         <>

@@ -145,6 +145,12 @@ button:active:not(:disabled) { transform: translateY(1px); }
 
 
 /* ---------- grid flow ---------- */
+/* file inputs stay in the layout (not display:none) and are opened by a real <label> tap: works on iOS Safari */
+.f-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); pointer-events: none; }
+label.f-drop, label.f-link { position: relative; }
+.f-drop.busy { cursor: progress; border-style: solid; background: #fbfaf6; }
+.f-drop.busy b::before { content: ''; display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 2px solid var(--line2); border-top-color: var(--ink); border-radius: 50%; animation: fspin .8s linear infinite; vertical-align: -1px; }
+@keyframes fspin { to { transform: rotate(360deg); } }
 .f-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .f-chip { min-width: 52px; height: 44px; border-radius: 12px; border: 1px solid var(--line2); background: #fff; font-size: 17px; font-weight: 700; cursor: pointer; }
 .f-chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
