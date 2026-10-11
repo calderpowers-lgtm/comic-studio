@@ -1,10 +1,10 @@
 // "One prompt, one upload" flow: Story → ChatGPT prompt → Upload one picture → (Text & export, shared).
 import { useEffect, useRef, useState } from 'react';
 import { localPlan } from '@shared/localplan.js';
-import { gridPrompt } from '@shared/chatgpt.js';
+import { gridPrompt, seriesPrompt, allPrompts } from '@shared/chatgpt.js';
 import { sheetPlan, splitAdvice, CANVASES } from '@shared/grid.js';
 import { hashStr } from '@shared/compose.js';
-import { CopyBtn, applyPlan, SlideEditor, REF_URLS } from './Steps.jsx';
+import { CopyBtn, applyPlan, SlideEditor, REF_URLS, PicturesStep } from './Steps.jsx';
 import FreeCanvas from './FreeCanvas.jsx';
 import { getImage, uid } from './storage.js';
 import { download, zipBlob, shareFiles, slug } from './exporters.js';
@@ -12,6 +12,8 @@ import { addSheetImage, redetect, cellsFor, sliceSheet, dropImages } from './sli
 import { UploadError } from './ingest.js';
 import { storageProblem } from './storage.js';
 
+export const isGrid = (p) => p.imageMode === 'grid';
+const setMode = (update, m) => update((p) => ({ ...p, imageMode: m }));
 export const COUNTS = [4, 6, 8, 9, 10];
 export const PROSE_EXAMPLE = `Neil is 52 and has owned a surfboard for eleven years. He has never once been in the ocean.
 
@@ -38,7 +40,7 @@ export const sheetsOf = (p) => sheetPlan(p.pages.length || p.settings.slides, !!
 export function planNow(p) {
   const plan = localPlan(p);
   const next = applyPlan(p, plan);
-  return { ...next, planKey: planKey(p), planEdited: false, planInfo: { beats: plan.beats, silent: plan.silent } };
+  return { ...next, planKey: planKey(p), planEdited: false, planInfo: { beats: plan.beats, silent: plan.silent, panelMode: !!plan.panelMode } };
 }
 export function needsPlan(p) { return !p.pages.length || p.planKey !== planKey(p); }
 
@@ -73,7 +75,7 @@ export function GridStoryStep({ project, update, go }) {
       </div>
       {project.script.trim() && (
         <p className="f-hint f-planline">
-          {info ? <>Split into {project.pages.length} slides{info.silent ? `, including ${info.silent} silent pause panel${info.silent > 1 ? 's' : ''} (the story is short; add more or pick fewer slides)` : ''}. </> : null}
+          {info ? <>Split into {project.pages.length} slides{info.panelMode ? ' (one per "Panel" in your script)' : project.pages.length < n ? ` (the story has ${project.pages.length} moments; add more for ${n})` : ''}. </> : null}
           <button className="f-link" onClick={() => go('edit')}>Edit slides (optional)</button>
         </p>
       )}
@@ -99,23 +101,70 @@ export function EditSlidesStep({ project, update, notify, go }) {
 }
 
 // ---------------- 2. ChatGPT prompt ----------------
-export function PromptStep({ project, update, notify, go }) {
+async function shareStyleImages(notify) {
+  const files = await Promise.all(REF_URLS.map(async (u, i) => [`style-${i + 1}.jpg`, await (await fetch(u)).blob()]));
+  try { if (await shareFiles(files, 'Comic style images')) return; } catch (e) { if (e?.name === 'AbortError') return; }
+  download(await zipBlob(files), 'comic-style-images.zip');
+  notify('Downloaded the 4 style images (.zip).');
+}
+
+export function PromptStep(props) { return isGrid(props.project) ? <GridPromptStep {...props} /> : <SeriesPromptStep {...props} />; }
+
+// Default: ChatGPT draws the panels as separate pictures, one per reply; the user just says "next".
+function SeriesPromptStep({ project, update, notify, go }) {
   const [show, setShow] = useState(false);
-  const sheets = sheetsOf(project);
-  const advice = splitAdvice(project.pages.length);
-  const split = sheets.length > 1;
-  const styleFiles = async () => Promise.all(REF_URLS.map(async (u, i) => [`style-${i + 1}.jpg`, await (await fetch(u)).blob()]));
-  const shareStyle = async () => {
-    const files = await styleFiles();
-    try { if (await shareFiles(files, 'Comic style images')) return; } catch (e) { if (e?.name === 'AbortError') return; }
-    download(await zipBlob(files), 'comic-style-images.zip');
-    notify('Downloaded the 4 style images (.zip).');
-  };
-  const desc = (s) => `${s.rows} row${s.rows > 1 ? 's' : ''} × ${s.cols} column${s.cols > 1 ? 's' : ''} in one ${CANVASES[s.canvas].label} picture`;
+  const n = project.pages.length;
   return (
     <>
       <section className="f-card f-big">
         <h2>Make the pictures in ChatGPT</h2>
+        <p className="f-sub">ChatGPT draws your {n} panels one at a time, as {n} separate pictures, all in one chat.</p>
+        <ol className="f-howto">
+          <li>
+            <b>Save the style images</b> to your phone.
+            <button className="f-ghost f-wide" onClick={() => shareStyleImages(notify)}><span className="f-refs xs">{REF_URLS.map((u) => <img key={u} src={u} alt="" />)}</span> Share style images</button>
+          </li>
+          <li>
+            <b>Copy the prompt.</b>
+            <CopyBtn className="f-primary f-wide f-huge" text={() => seriesPrompt(project)} label="Copy ChatGPT prompt" notify={notify} />
+          </li>
+          <li>
+            In ChatGPT, start a <b>new chat</b>, attach the 4 style images (the <b>+</b> button), paste the prompt and send. It draws <b>panel 1</b>.
+            <a className="f-link f-ext" href="https://chatgpt.com/" target="_blank" rel="noreferrer">Open ChatGPT ↗</a>
+          </li>
+          <li>Type <b>next</b> for each new panel, until all {n} are done.</li>
+          <li>Save each picture (press and hold it → <b>Save to Photos</b>), then come back and tap <b>Next</b>.</li>
+        </ol>
+        <p className="f-hint">If a picture has words or bubbles in it, reply: <i>"Same picture again, but with no text at all."</i> If ChatGPT puts several panels in one picture, reply: <i>"Only one panel per picture, please. Redo it."</i></p>
+      </section>
+
+      <section className="f-card">
+        <div className="f-row wrap gap"><b>{n} slides</b><div className="spacer" />
+          <button className="f-link" onClick={() => go('edit')}>Edit slides</button>
+          <button className="f-link" onClick={() => setShow(!show)}>{show ? 'Hide' : 'See'} prompt</button></div>
+        {show && <pre className="f-pre">{seriesPrompt(project)}</pre>}
+        <ol className="f-mini">
+          {project.pages.map((pg) => <li key={pg.id}>{pg.panels[0].description}<i>{pg.panels[0].lettering.map((l) => l.text).join(' / ')}</i></li>)}
+        </ol>
+        <p className="f-hint">ChatGPT forgets "next" or mixes panels up? Paste one prompt per panel instead: <CopyBtn className="f-link" text={() => allPrompts(project)} label="Copy all panel prompts" notify={notify} /></p>
+      </section>
+      <p className="f-hint f-center">Rather have every panel in one big picture? <button className="f-link" onClick={() => setMode(update, 'grid')}>Use the grid prompt</button></p>
+    </>
+  );
+}
+
+function GridPromptStep({ project, update, notify, go }) {
+  const [show, setShow] = useState(false);
+  const sheets = sheetsOf(project);
+  const advice = splitAdvice(project.pages.length);
+  const split = sheets.length > 1;
+  const shareStyle = () => shareStyleImages(notify);
+  const desc = (s) => `${s.rows} row${s.rows > 1 ? 's' : ''} × ${s.cols} column${s.cols > 1 ? 's' : ''} in one ${CANVASES[s.canvas].label} picture`;
+  return (
+    <>
+      <section className="f-card f-big">
+        <h2>One grid picture in ChatGPT</h2>
+        <p className="f-sub">ChatGPT draws every panel in one picture and the app cuts it up. Panels come out smaller than separate pictures.</p>
         <ol className="f-howto">
           <li>
             <b>Save the style images</b> to your phone.
@@ -154,7 +203,7 @@ export function PromptStep({ project, update, notify, go }) {
           {project.pages.map((pg) => <li key={pg.id}>{pg.panels[0].description}<i>{pg.panels[0].lettering.map((l) => l.text).join(' / ')}</i></li>)}
         </ol>
       </section>
-      <p className="f-hint f-center">Prefer one picture per slide? <button className="f-link" onClick={() => update((p) => ({ ...p, flow: 'slides', view: 'draw' }))}>Use the slide-by-slide way</button></p>
+      <p className="f-hint f-center">Sharper and easier: <button className="f-link" onClick={() => setMode(update, 'separate')}>Get one picture per slide instead</button></p>
     </>
   );
 }
@@ -236,12 +285,26 @@ function SheetSlot({ project, update, notify, plan, k, total }) {
     try {
       const s = await addSheetImage(file, plan, setBusy);
       if (sheet?.img) dropImages([sheet.img]);
+      if (s.method !== 'detected') { setSheet({ ...s, ask: true }); return; } // no clear white gaps: don't force-cut, ask first
       setSheet(s);
       const n = await slice(s);
-      notify(s.method === 'detected' ? `Found all ${n} panels.` : 'Cut evenly. Check the red lines.');
+      notify(`Found all ${n} panels.`);
       if (storageProblem) setErr("Heads up: this browser won't let the app save pictures (Private Browsing?). Finish and download the comic in this visit.");
     } catch (e) { fail(e); } finally { setBusy(''); }
   };
+  const firstEmpty = Math.max(0, project.pages.findIndex((pg) => !pg.panels[0].img));
+  // A single scene, not a grid: put the whole picture on one slide instead of cutting it into strips.
+  const useForOne = () => {
+    const key = sheet.img, i = firstEmpty;
+    update((p) => {
+      const sheets = [...(p.grid?.sheets || [])]; sheets[k] = null;
+      const old = p.pages[i].panels[0].img;
+      if (old) setTimeout(() => dropImages([old]), 500);
+      return { ...p, imageMode: 'separate', grid: { ...(p.grid || {}), sheets }, pages: p.pages.map((pg, j) => (j === i ? { ...pg, panels: [{ ...pg.panels[0], img: key, crop: undefined, autoCrop: undefined }] } : pg)) };
+    });
+    notify(`Added to slide ${i + 1}.`);
+  };
+  const cutAnyway = async () => { const s = { ...sheet, ask: false }; setSheet(s); try { setErr(''); await slice(s); notify('Cut evenly. Check the red lines.'); } catch (e) { fail(e); } };
   const commitLines = async () => { const s = { ...sheet, ...live, method: 'manual' }; setLive(null); setSheet(s); try { setErr(''); await slice(s); } catch (e) { fail(e); } };
   const setGrid = async (rows, cols) => { try { setErr(''); const s = await redetect(sheet, rows, cols, plan.count); setSheet(s); await slice(s); } catch (e) { fail(e); } };
   const picker = (children, className) => (
@@ -254,13 +317,22 @@ function SheetSlot({ project, update, notify, plan, k, total }) {
   const label = total > 1 ? `Picture ${k + 1} of 2 (slides ${plan.start + 1}–${plan.start + plan.count})` : "ChatGPT's picture";
   return (
     <section className="f-card">
-      <div className="f-row"><h2>{label}</h2><div className="spacer" />{sheet && picker('Choose another', 'f-link')}</div>
+      <div className="f-row"><h2>{label}</h2><div className="spacer" />{sheet && !busy && picker('Choose another', 'f-link')}</div>
       {err && <div className="f-error" role="alert">{err}</div>}
       {!sheet ? (
         <div onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
           onDrop={(e) => { e.preventDefault(); setHover(false); onFile(e.dataTransfer.files[0]); }}>
           {picker(<><b>{busy || '+ Add the picture'}</b><span>{busy ? 'One moment…' : `Tap to pick it from Photos. Expecting ${plan.rows} × ${plan.cols} panels.`}</span></>, `f-drop f-drop-big ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`)}
         </div>
+      ) : sheet.ask ? (
+        <>
+          <div className="f-status warn" role="alert">This looks like <b>one picture</b>, not a grid of {plan.count} panels (no clear white gaps between panels). Cutting it would slice one scene into strips.</div>
+          <div className="f-row wrap gap f-ask">
+            <button className="f-primary" onClick={useForOne}>Use it for slide {firstEmpty + 1} only</button>
+            <button className="f-ghost" onClick={cutAnyway}>Cut it into {plan.count} anyway</button>
+          </div>
+          <div className="f-ask-view">{url && <img src={url} alt="" draggable={false} />}</div>
+        </>
       ) : (
         <>
           <div className={`f-status ${sheet.method === 'detected' ? 'ok' : sheet.method === 'manual' ? 'ok' : 'warn'}`}>
@@ -285,13 +357,19 @@ function SheetSlot({ project, update, notify, plan, k, total }) {
   );
 }
 
-export function UploadStep({ project, update, notify, go }) {
+export function UploadStep(props) {
+  const { update } = props;
+  return isGrid(props.project) ? <GridUploadStep {...props} /> : <PicturesStep {...props} onGrid={() => setMode(update, 'grid')} />;
+}
+
+function GridUploadStep({ project, update, notify, go }) {
   const sheets = sheetsOf(project);
   const [frame, setFrame] = useState(null);
   const filled = project.pages.filter((pg) => pg.panels[0].img).length;
   const setCrop = (i, crop) => update((p) => ({ ...p, pages: p.pages.map((pg, j) => (j === i ? { ...pg, panels: [{ ...pg.panels[0], crop: crop && { ...crop, user: true } }] } : pg)) }));
   return (
     <>
+      <p className="f-hint f-center">Cutting up one grid picture. <button className="f-link" onClick={() => setMode(update, 'separate')}>← Back to one photo per slide</button></p>
       {sheets.map((plan, k) => <SheetSlot key={`${k}-${plan.rows}x${plan.cols}-${plan.count}`} project={project} update={update} notify={notify} plan={plan} k={k} total={sheets.length} />)}
       {filled > 0 && (
         <section className="f-card">
@@ -316,7 +394,7 @@ export function UploadStep({ project, update, notify, go }) {
               );
             })}
           </div>
-          <p className="f-hint">One panel came out badly? <button className="f-link" onClick={() => go('pictures')}>Replace a single slide's picture</button></p>
+          <p className="f-hint">One panel came out badly? <button className="f-link" onClick={() => setMode(update, 'separate')}>Replace a single slide's picture</button></p>
         </section>
       )}
     </>

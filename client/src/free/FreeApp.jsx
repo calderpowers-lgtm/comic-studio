@@ -9,7 +9,7 @@ const FLOWS = {
   grid: [
     { key: 'story', label: 'Story', C: GridStoryStep },
     { key: 'prompt', label: 'Prompt', C: PromptStep },
-    { key: 'upload', label: 'Upload', C: UploadStep },
+    { key: 'upload', label: 'Pictures', C: UploadStep },
     { key: 'finish', label: 'Finish', C: FinishStep },
   ],
   slides: [
@@ -30,13 +30,15 @@ export function freshProject() {
     id: uid(), title: '', script: '', presetId: pr.id, styleText: pr.styleText,
     settings: { ...structuredClone(pr.settings), format: 'carousel', slides: 10, mode: 'free' },
     lettering: structuredClone(pr.lettering), styleBible: structuredClone(pr.styleBible),
-    characters: [], pages: [], flow: 'grid', view: 'story', grid: { split: false, sheets: [] },
+    characters: [], pages: [], flow: 'grid', view: 'story', imageMode: 'separate', grid: { split: false, sheets: [] },
   };
 }
 function migrate(p) {
   if (!p) return null;
   if (!p.flow) { p.flow = 'grid'; p.view = p.pages?.length ? 'prompt' : 'story'; p.planKey = undefined; delete p.step; }
   p.grid = p.grid || { split: false, sheets: [] };
+  if (!p.imageMode) p.imageMode = p.grid.sheets?.some(Boolean) ? 'grid' : 'separate';
+  if (p.view === 'pictures' && p.flow === 'grid') { p.view = 'upload'; p.imageMode = 'separate'; }
   return p;
 }
 
@@ -94,10 +96,10 @@ export default function FreeApp() {
         {!extra && (
           <div className="f-nav">
             {idx > 0 ? <button className="f-ghost" onClick={() => go(steps[idx - 1].key)}>← Back</button> : <span />}
-            {idx < steps.length - 1 && <button className="f-primary" disabled={!canGo(idx + 1)} onClick={() => go(steps[idx + 1].key)}>Next: {grid ? ['get the ChatGPT prompt', 'upload the picture', 'add text & export'][idx] : steps[idx + 1].label} →</button>}
+            {idx < steps.length - 1 && <button className="f-primary" disabled={!canGo(idx + 1)} onClick={() => go(steps[idx + 1].key)}>Next: {grid ? ['get the ChatGPT prompt', project.imageMode === 'grid' ? 'upload the picture' : 'add the pictures', 'add text & export'][idx] : steps[idx + 1].label} →</button>}
           </div>
         )}
-        {project.flow === 'slides' && <p className="f-hint f-center">Using the slide-by-slide way. <button className="f-link" onClick={() => update((p) => ({ ...p, flow: 'grid', view: 'prompt' }))}>Switch to one picture for all slides</button></p>}
+        {project.flow === 'slides' && <p className="f-hint f-center">Using the slide-by-slide way. <button className="f-link" onClick={() => update((p) => ({ ...p, flow: 'grid', view: 'prompt' }))}>Switch to the simple way</button></p>}
       </main>
       <footer className="f-foot">
         Everything stays on this device. Nothing is sent anywhere.

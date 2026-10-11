@@ -276,18 +276,22 @@ export function DrawStep({ project, notify }) {
   );
 }
 
-// ---------------- 5. Pictures ----------------
-export function PicturesStep({ project, update, notify }) {
+// ---------------- 5. Pictures: one photo per slide (default upload) ----------------
+// Files from the iPhone picker often share one timestamp; Array.sort is stable, so ties keep the order they were picked in.
+const byTime = (files) => files.map((f, i) => [f, i]).sort((a, b) => (a[0].lastModified || 0) - (b[0].lastModified || 0) || a[1] - b[1]).map((x) => x[0]);
+
+export function PicturesStep({ project, update, notify, onGrid }) {
   const [hover, setHover] = useState(false);
   const [frameOpen, setFrameOpen] = useState(null);
   const [dragFrom, setDragFrom] = useState(null);
   const [busy, setBusy] = useState('');
+  const [slotBusy, setSlotBusy] = useState(null);
   const [err, setErr] = useState('');
   const setPanel = (i, patch) => update((p) => ({ ...p, pages: p.pages.map((pg, j) => (j === i ? { ...pg, panels: [{ ...pg.panels[0], ...patch }] } : pg)) }));
   const addFiles = async (list) => {
     const all = [...(list || [])];
     if (!all.length) return;
-    const files = all.filter(looksLikeImage).sort((a, b) => a.lastModified - b.lastModified || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const files = byTime(all.filter(looksLikeImage));
     const problems = all.filter((f) => !looksLikeImage(f)).map((f) => `“${f.name}” isn't a picture.`);
     const empties = project.pages.filter((pg) => !pg.panels[0].img).length;
     const keys = [];
@@ -303,18 +307,18 @@ export function PicturesStep({ project, update, notify }) {
       return { ...p, pages: p.pages.map((pg) => (pg.panels[0].img || k >= keys.length ? pg : { ...pg, panels: [{ ...pg.panels[0], img: keys[k++], crop: undefined }] })) };
     });
     const extra = files.length - Math.min(files.length, empties);
-    if (extra > 0) problems.push(`${extra} extra photo${extra > 1 ? 's' : ''} had no empty slide; use Replace on a slide.`);
+    if (extra > 0) problems.push(empties ? `${extra} extra photo${extra > 1 ? 's' : ''} had no empty slide. Use Replace on a slide.` : 'Every slide already has a photo. Use Replace on a slide, or × to empty it first.');
     if (storageProblem) problems.push("This browser won't let the app save pictures (Private Browsing?). Finish and download the comic in this visit.");
     if (problems.length) setErr(problems.join(' '));
-    if (keys.length) notify(`Added ${keys.length} picture${keys.length > 1 ? 's' : ''} in order.`);
+    if (keys.length) notify(`Added ${keys.length} photo${keys.length > 1 ? 's' : ''}.`);
   };
   const replace = async (i, file) => {
     if (!file) return;
-    setErr(''); setBusy('Reading photo…');
-    try { const k = await storePhoto(file, 'img:'); const old = project.pages[i].panels[0].img; setPanel(i, { img: k, crop: undefined }); if (old) delImage(old); }
-    catch (e) { setErr(errText(e)); } finally { setBusy(''); }
+    setErr(''); setSlotBusy(i);
+    try { const k = await storePhoto(file, 'img:'); const old = project.pages[i].panels[0].img; setPanel(i, { img: k, crop: undefined }); if (old) delImage(old); notify(`Photo added to slide ${i + 1}.`); if (storageProblem) setErr("This browser won't let the app save pictures (Private Browsing?). Finish and download the comic in this visit."); }
+    catch (e) { setErr(`Slide ${i + 1}: ${errText(e)}`); } finally { setSlotBusy(null); }
   };
-  const fileInput = (onPick, multiple = false) => <input className="f-file" type="file" accept="image/*,.heic,.heif" multiple={multiple} disabled={!!busy} onChange={(e) => { const fl = [...(e.target.files || [])]; e.target.value = ''; onPick(fl); }} />;
+  const fileInput = (onPick, multiple = false, label) => <input className="f-file" type="file" accept="image/*,.heic,.heif" multiple={multiple} aria-label={label} disabled={!!busy || slotBusy != null} onChange={(e) => { const fl = [...(e.target.files || [])]; e.target.value = ''; onPick(fl); }} />;
   const swap = (i, j) => update((p) => {
     const a = p.pages.map((pg) => ({ ...pg, panels: [{ ...pg.panels[0] }] }));
     const A = a[i].panels[0], B = a[j].panels[0];
@@ -322,51 +326,62 @@ export function PicturesStep({ project, update, notify }) {
     return { ...p, pages: a };
   });
   const filled = project.pages.filter((pg) => pg.panels[0].img).length;
+  const total = project.pages.length;
   return (
     <>
       <section className="f-card">
-        <h2>Add the pictures</h2>
-        <p className="f-sub">Pick or drop all of ChatGPT's pictures at once. They fill the empty slides in order (oldest first). Each one is cropped to 4:5 automatically.</p>
+        <h2>Add a photo to each slide</h2>
+        <p className="f-sub">One ChatGPT picture per slide. Tap <b>Add photo</b> on a slide, or add them all at once (pick them in slide order). Each is cropped to fit automatically.</p>
         <div onDragOver={(e) => { e.preventDefault(); setHover(true); }} onDragLeave={() => setHover(false)}
           onDrop={(e) => { e.preventDefault(); setHover(false); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); }}>
-          <label className={`f-drop ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`}>
-            <b>{busy || '+ Add pictures'}</b><span>{busy ? 'One moment…' : `Tap to choose from Photos (pick several at once) · ${filled}/${project.pages.length} slides filled`}</span>
-            {fileInput(addFiles, true)}
+          <label className={`f-drop f-several ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`}>
+            <b>{busy || '+ Add several photos'}</b><span>{busy ? 'One moment…' : filled < total ? `They fill the empty slides in order · ${filled}/${total} done` : `All ${total} slides have a photo`}</span>
+            {fileInput(addFiles, true, 'Add several photos')}
           </label>
         </div>
         {err && <div className="f-error" role="alert">{err}</div>}
       </section>
-      <div className="f-grid">
+      <div className="f-grid f-grid-phone f-slots">
         {project.pages.map((pg, i) => {
           const x = pg.panels[0];
           const crop = x.crop || {};
+          const words = x.lettering.map((l) => l.text).join(' / ');
           return (
-            <div key={pg.id} className={`f-tile ${dragFrom === i ? 'dragging' : ''}`} draggable={!!x.img}
+            <div key={pg.id} className={`f-tile ${dragFrom === i ? 'dragging' : ''}`} data-slide={i + 1} draggable={!!x.img}
               onDragStart={() => setDragFrom(i)} onDragEnd={() => setDragFrom(null)}
-              onDragOver={(e) => { if (dragFrom != null) e.preventDefault(); }}
+              onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (dragFrom != null && dragFrom !== i) swap(dragFrom, i); else if (e.dataTransfer.files.length) replace(i, e.dataTransfer.files[0]); setDragFrom(null); }}>
-              <FreeCanvas project={project} pageIndex={i} />
+              {x.img ? <FreeCanvas project={project} pageIndex={i} /> : (
+                <label className={`f-addphoto ${slotBusy === i ? 'busy' : ''}`}>
+                  <span className="n">{i + 1}</span>
+                  <b>{slotBusy === i ? 'Reading…' : '+ Add photo'}</b>
+                  <span className="d">{x.description}</span>
+                  {words && <i>{words}</i>}
+                  {fileInput((fl) => replace(i, fl[0]), false, `Add photo for slide ${i + 1}`)}
+                </label>
+              )}
               <div className="f-tile-bar">
                 <b>{i + 1}</b>
-                <button className="f-icon" title="Swap picture with previous slide" disabled={i === 0} onClick={() => swap(i, i - 1)}>←</button>
-                <button className="f-icon" title="Swap picture with next slide" disabled={i === project.pages.length - 1} onClick={() => swap(i, i + 1)}>→</button>
+                <button className="f-icon" title="Move this picture one slide earlier" disabled={i === 0} onClick={() => swap(i, i - 1)}>←</button>
+                <button className="f-icon" title="Move this picture one slide later" disabled={i === total - 1} onClick={() => swap(i, i + 1)}>→</button>
                 <div className="spacer" />
-                <label className="f-link">{x.img ? 'Replace' : 'Add'}{fileInput((fl) => replace(i, fl[0]))}</label>
+                {x.img && <label className="f-link">{slotBusy === i ? '…' : 'Replace'}{fileInput((fl) => replace(i, fl[0]), false, `Replace photo for slide ${i + 1}`)}</label>}
                 {x.img && <button className="f-link" onClick={() => setFrameOpen(frameOpen === i ? null : i)}>Frame</button>}
                 {x.img && <button className="f-icon danger" title="Remove picture" onClick={() => { const old = x.img; setPanel(i, { img: null, crop: undefined }); delImage(old); }}>×</button>}
               </div>
               {frameOpen === i && x.img && (
                 <div className="f-frame">
-                  <label>Zoom<input type="range" min={1} max={2} step={0.02} value={crop.zoom || 1} onChange={(e) => setPanel(i, { crop: { ...crop, zoom: +e.target.value } })} /></label>
-                  <label>Up / down<input type="range" min={0} max={1} step={0.01} value={crop.y ?? 0.5} onChange={(e) => setPanel(i, { crop: { ...crop, y: +e.target.value } })} /></label>
-                  <label>Left / right<input type="range" min={0} max={1} step={0.01} value={crop.x ?? 0.5} onChange={(e) => setPanel(i, { crop: { ...crop, x: +e.target.value } })} /></label>
-                  <button className="f-link" onClick={() => setPanel(i, { crop: undefined })}>Reset</button>
+                  <label>Up / down<input type="range" min={0} max={1} step={0.01} value={crop.y ?? 0.5} onChange={(e) => setPanel(i, { crop: { ...crop, y: +e.target.value, user: true } })} /></label>
+                  <label>Zoom<input type="range" min={1} max={2} step={0.02} value={crop.zoom || 1} onChange={(e) => setPanel(i, { crop: { ...crop, zoom: +e.target.value, user: true } })} /></label>
+                  <label>Left / right<input type="range" min={0} max={1} step={0.01} value={crop.x ?? 0.5} onChange={(e) => setPanel(i, { crop: { ...crop, x: +e.target.value, user: true } })} /></label>
+                  <button className="f-link" onClick={() => setPanel(i, { crop: x.autoCrop })}>Reset</button>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+      {onGrid && <p className="f-hint f-center">ChatGPT drew all panels in one picture? <button className="f-link" onClick={onGrid}>Cut up one grid picture</button></p>}
     </>
   );
 }

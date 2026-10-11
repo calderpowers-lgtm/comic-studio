@@ -8,23 +8,86 @@ const NAME_RE = /^([A-Z][A-Za-z0-9 .'-]{0,28}?)\s*(\((?:[^)]*)\))?\s*:\s*(.+)$/;
 
 function settingOf(text, prev) {
   const t = text.toLowerCase();
-  const kws = ['kitchen', 'office', 'bedroom', 'living room', 'apartment', 'house', 'home', 'cafe', 'bar', 'room', 'beach', 'ocean', 'sea', 'mountain', 'cliff', 'forest', 'park', 'field', 'farm', 'city', 'street', 'road', 'parking lot', 'garden', 'porch', 'deck', 'lake', 'pond', 'desert', 'space'];
-  const k = kws.find((k) => t.includes(k));
+  const kws = ['kitchen', 'office', 'bedroom', 'living room', 'apartment', 'house', 'home', 'cafe', 'bar', 'room', 'beach', 'ocean', 'sea', 'mountain', 'cliff', 'forest', 'park', 'field', 'farm', 'city', 'street', 'road', 'parking lot', 'dirt road', 'garden', 'porch', 'deck', 'lake', 'pond', 'desert', 'space'];
+  const k = kws.find((k) => new RegExp(`\\b${k}\\b`).test(t)) || (/dirt road|country road/.test(t) ? 'dirt road' : null);
   const time = /night|moon|midnight|dark/.test(t) ? ' at night' : /sunset|sunrise|dawn|dusk/.test(t) ? ' at sunset' : '';
   return k ? k + time : prev || '';
+}
+
+// "Panel 3", "PANEL 3:", "**Panel 3**", "Slide 3 -", "Frame 3." … at the start of a line → explicit slide boundary
+export const PANEL_RE = /^\s*[*#_]*\s*(?:panel|slide|frame|page|scene|pic(?:ture)?|image)\s*#?\s*(\d{1,2})\s*[*_]*\s*(?:[:.)\-–—]\s*|\s+|$)(.*)$/i;
+// Sentences that describe what we SEE (stage/camera directions) → picture description, never lettering
+export const DIRECTION_RE = /\b(?:the (?:frame|shot|camera|panel|scene|view|image)\b|frame (?:focuses|shows|cuts|zooms|pans)|close[- ]?up|extreme close|wide shot|medium shot|long shot|full shot|establishing shot|over[- ]the[- ]shoulder|bird'?s[- ]eye|aerial view|camera|we see|shot of|cut to|zoom(?:s|ing)? (?:in|out|on)|pans? (?:to|across|over|up|down)|focus(?:es|ing)? on|in the (?:fore|back)ground|from (?:above|below|behind)|low angle|high angle|pov\b|int\.|ext\.|silhouette of|split panel|same (?:scene|road|place|room|spot|street|angle|shot))/i;
+export const isDirection = (t) => DIRECTION_RE.test(t) || /^(?:the following|later|meanwhile|next (?:day|morning|afternoon|evening)|that (?:night|evening|afternoon)|the next (?:day|morning))\b[^.!?]{0,40}[.!?]?$/i.test(t.trim());
+
+// Split one script chunk into lettering (CAPTION:/NAME: lines, "quoted" dialogue) and picture description (everything else).
+function splitChunk(text, addSpeaker, names) {
+  const items = [], desc = [];
+  const lines = String(text).replace(/[\u201C\u201D\u201E]/g, '"').split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  for (const l of lines) {
+    const m = l.match(NAME_RE);
+    if (m && !/^(panel|slide|frame|page|scene|shot|camera|setting|location|time|note|characters?|title)$/i.test(m[1].trim())) {
+      const who = m[1].trim(), mod = (m[2] || '').toLowerCase(), t = m[3].trim().replace(/^"|"$/g, '');
+      if (/^(caption|narration|narrator|nar|text|voice ?over|vo)$/i.test(who)) { items.push({ type: 'caption', speaker: '', text: t }); continue; }
+      if (/^sfx|sound$/i.test(who)) { items.push({ type: 'sfx', speaker: '', text: t }); continue; }
+      const id = addSpeaker(who);
+      items.push({ type: /whisper/.test(mod) ? 'whisper' : /shout|yell/.test(mod) || /!{2,}$/.test(t) ? 'shout' : /thought|thinks/.test(mod) ? 'thought' : 'speech', speaker: id, text: t });
+      continue;
+    }
+    // "quoted" speech inside a description line; speaker = a known name in the line, if any
+    let rest = l;
+    for (const q of l.matchAll(/"([^"]{1,300})"/g)) {
+      const who = names.find((n) => new RegExp(`\\b${n}\\b`, 'i').test(l.replace(q[0], '')));
+      items.push({ type: who ? 'speech' : 'caption', speaker: who ? addSpeaker(who) : '', text: q[1].trim().replace(/,$/, '.') });
+      rest = rest.replace(q[0], '');
+    }
+    const V = '(?:says|said|asks|asked|mutters|muttered|whispers|whispered|shouts|shouted|yells|yelled|replies|replied)';
+    rest = rest.replace(new RegExp(`\\b(?:[A-Z][a-z]+|he|she|they|I)\\s+${V}\\b[,.]?`, 'g'), '').replace(new RegExp(`\\b${V}\\s+(?:[A-Z][a-z]+|he|she)\\b[,.]?`, 'g'), '').replace(/\s*,\s*([.!?]|$)/g, '$1').replace(/\s{2,}/g, ' ').trim();
+    if (/[A-Za-z]{2,}/.test(rest)) desc.push(rest);
+  }
+  return { items, desc: desc.join(' ') };
 }
 
 export function localPlan(project) {
   const s = project.settings;
   const carousel = s.format !== 'pages';
   const lines = String(project.script || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const hasDialogue = lines.some((l) => NAME_RE.test(l) && !/^(page|panel|slide)\b/i.test(l));
+  const markers = lines.filter((l) => PANEL_RE.test(l)).length;
+  const directions = lines.flatMap((l) => l.split(/(?<=[.!?])\s+/)).filter((x) => !PANEL_RE.test(x) && isDirection(x)).length;
+  const hasDialogue = lines.some((l) => NAME_RE.test(l) && !PANEL_RE.test(l) && !/^(page|panel|slide|frame|scene)\b/i.test(l));
   const beats = [];
   const speakers = new Map();
   let desc = '';
   let pendingDesc = null;
-  const addSpeaker = (name) => { const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); if (!speakers.has(id)) speakers.set(id, name.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase())); return id; };
-  if (hasDialogue) {
+  let panelMode = false;
+  const addSpeaker = (name) => { name = name.replace(/^the\s+/i, ''); const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); if (!speakers.has(id)) speakers.set(id, name.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase())); return id; };
+  if (markers >= 2) {
+    // Explicit "Panel N" markers: one slide per panel, in the script's order. Visual text → picture; only
+    // CAPTION:/NAME: lines and "quoted" dialogue are lettered.
+    panelMode = true;
+    const names = proseNames(project.script || '');
+    const segs = []; let cur = null;
+    for (const l of String(project.script || '').split(/\r?\n/)) {
+      const m = l.match(PANEL_RE);
+      if (m) { cur = { text: m[2] || '' }; segs.push(cur); }
+      else if (cur) cur.text += '\n' + l;
+    }
+    for (const sg of segs) {
+      const { items, desc: d } = splitChunk(sg.text, addSpeaker, names);
+      if (!d && !items.length) continue;
+      beats.push({ desc: d, items, who: names.filter((n) => new RegExp(`\\b${n}\\b`, 'i').test(sg.text)).map(addSpeaker) });
+    }
+  } else if (hasDialogue || directions >= 2) {
+    // Script style: lettering only from CAPTION:/NAME: lines and quotes; description lines → picture.
+    const names = proseNames(project.script || '');
+    for (const l of lines) {
+      if (/^(page|panel|slide|frame|scene)\b\s*\d*\s*[:.]?\s*$/i.test(l)) continue;
+      const { items, desc: d } = splitChunk(l, addSpeaker, names);
+      if (items.length) { beats.push({ desc: d || pendingDesc || desc, items }); pendingDesc = null; if (d) desc = d; }
+      else if (d) { if (pendingDesc) beats.push({ desc: pendingDesc, items: [] }); desc = d; pendingDesc = d; }
+    }
+    if (pendingDesc) beats.push({ desc: pendingDesc, items: [] });
+  } else if (false) {
     for (const l of lines) {
       if (/^(page|panel|slide)\b/i.test(l)) continue;
       const m = l.match(NAME_RE);
@@ -48,18 +111,43 @@ export function localPlan(project) {
   }
   // characters
   if (!speakers.size) speakers.set('hero', 'Hero');
-  const LOOKS = /\b(hair|bob|beard|dress|suit|shirt|jacket|hoodie|sweater|coat|wearing|glasses|hat|tall|short|old|\d{1,3})\b/i;
-  const hint = (name) => {
+  const VISUAL = /\b(hair|bob|beard|moustache|mustache|bald|dress|suit|shirt|vest|hat|cap|jacket|hoodie|sweater|coat|glasses|scarf|uniform|apron|skinny|chubby|fat|tall|tiny|huge|old (?:man|woman|lady)|young|wearing|wears)\b/i;
+  const ANIMALS = 'pit ?bull|dog|puppy|cat|kitten|bird|parrot|pigeon|seagull|horse|goat|cow|pig|duck|frog|bear|rabbit|mouse|rat|fox|chicken|squirrel|crab|fish';
+  const ANIMAL = /\b(pit ?bull|dog|puppy|cat|kitten|bird|parrot|pigeon|seagull|horse|goat|cow|pig|duck|frog|bear|rabbit|mouse|rat|fox|chicken|squirrel|crab|fish)s?\b/i;
+  const sentencesWith = (name) => {
     const re = new RegExp(`\\b${name}\\b`, 'i');
-    const sents = lines.filter((l) => !NAME_RE.test(l)).flatMap((l) => l.split(/(?<=[.!?])\s+/)).filter((l) => re.test(l));
-    return sents.find((l) => LOOKS.test(l)) || sents[0] || '';
+    return lines.filter((l) => !NAME_RE.test(l) || /^characters?\s*:/i.test(l)).flatMap((l) => l.split(/(?<=[.!?;])\s+/)).filter((l) => re.test(l));
   };
-  const characters = [...speakers].map(([id, name], i) => ({ id, name, description: mockLook(id, name, hint(name)).text, isMain: i < 3 }));
+  const looksOf = (name) => {
+    // the story's own description: "Walter, a skinny old man in a straw hat" → keep it, minus the action that follows
+    const sent = sentencesWith(name).find((l) => VISUAL.test(l));
+    if (sent) {
+      let c = sent.slice(sent.search(new RegExp(`\\b${name}\\b`, 'i')));
+      c = c.replace(/\b(stands|walks|sits|runs|looks|stares|holds|holding|carries|carrying|goes|drives|is lying|lies|barks|says|said)\b.*$/i, '').replace(/[\s,;:.]+$/, '');
+      if (VISUAL.test(c)) return c;
+    }
+    return '';
+  };
+  const animalOf = (name) => {
+    if (!ANIMAL.test(name)) return '';
+    const all = [...String(project.script || '').matchAll(new RegExp(`\\b(?:a|an|the)\\s+((?:[a-z-]+\\s+){0,3}?(?:${ANIMALS}))\\b`, 'gi'))].map((m) => m[1]).filter((t) => t !== t.toUpperCase());
+    return all.sort((x, y) => y.split(/\s+/).length - x.split(/\s+/).length)[0] || name.toLowerCase();
+  };
+  const describe = (id, name) => {
+    const animal = animalOf(name);
+    if (animal) return `${animal[0].toUpperCase() + animal.slice(1)} (an animal, not a person). Drawn simply: dot eyes, flat colours, thick wobbly outline.`;
+    const own = looksOf(name);
+    if (own) return `${own}. Simple round face, dot eyes, single-line mouth.`;
+    return mockLook(id, name, sentencesWith(name).join(' ')).text;
+  };
+  const characters = [...speakers].map(([id, name], i) => ({ id, name, description: describe(id, name), isMain: i < 3 }));
   // fit beats to format
   const target = carousel ? s.slides : s.pages;
   let groups;
-  if (carousel) {
-    groups = fitBeats(beats, Math.max(1, target), characters);
+  if (carousel && panelMode) {
+    groups = beats.slice(0, 20).map((b) => [b]);
+  } else if (carousel) {
+    groups = fitBeats(beats.filter((b) => b.desc || b.items.length), Math.max(1, target), characters);
   } else {
     const per = Math.min(6, Math.max(3, Math.ceil(beats.length / target)));
     groups = [];
@@ -86,8 +174,10 @@ export function localPlan(project) {
       }
       const positions = chars.length === 1 ? [['center-left', 'center', 'center-right'][(gi + pi) % 3]] : chars.length === 2 ? ['left', 'right'] : ['left', 'center', 'right'];
       const idx = carousel ? gi : gi * 6 + pi;
+      // the script's own camera words win over the default shot rhythm
+      const own = /extreme close/i.test(d) ? 'extreme-close-up' : /close[- ]?up/i.test(d) ? 'close-up' : /wide shot|establishing/i.test(d) ? 'wide' : /medium shot/i.test(d) ? 'medium' : /bird'?s[- ]eye|aerial|overhead/i.test(d) ? 'birds-eye' : /over[- ]the[- ]shoulder/i.test(d) ? 'over-the-shoulder' : /low angle/i.test(d) ? 'low-angle' : null;
       return {
-        shot: idx === 0 ? 'establishing' : SHOT_CYCLE[idx % SHOT_CYCLE.length],
+        shot: own || (idx === 0 ? 'establishing' : SHOT_CYCLE[idx % SHOT_CYCLE.length]),
         size: !carousel && pi === 0 && gi === 0 ? 'large' : 'medium',
         setting, description: d || 'A quiet moment.', characters: chars,
         staging: chars.slice(0, 3).map((id, k) => ({ character_id: id, position: positions[k] || 'center', action: 'standing', expression: 'deadpan' })),
@@ -98,7 +188,7 @@ export function localPlan(project) {
   });
   const firstLine = (project.script || '').split(/[.\n]/)[0].trim();
   const silent = groups.filter((g) => g.every((b) => b.silent)).length;
-  return { title: project.title || (firstLine.length < 48 ? firstLine : 'Untitled Comic'), characters, pages, cost: 0, beats: beats.length, silent };
+  return { title: project.title || (firstLine.length < 48 && !PANEL_RE.test(firstLine) ? firstLine : 'Untitled Comic'), characters, pages, cost: 0, beats: beats.length, silent, panelMode };
 }
 
 
@@ -117,6 +207,14 @@ function splitSentences(t) {
   return out;
 }
 const words = (t) => (String(t).trim().match(/\S+/g) || []).length;
+
+// Character names in free text (capitalised words seen mid-sentence, or as speakers). Used by script modes.
+export function proseNames(text) {
+  const found = new Set();
+  proseBeats(text, (n) => { found.add(n); return n.toLowerCase().replace(/[^a-z0-9]+/g, '-'); });
+  for (const m of String(text).matchAll(/^\s*([A-Z][A-Za-z]+)(?:\s*\([^)]*\))?\s*:/gm)) if (!/^(caption|narration|narrator|sfx|panel|slide|frame|page|scene|characters?|title|note|setting)$/i.test(m[1])) found.add(m[1][0] + m[1].slice(1).toLowerCase());
+  return [...found];
+}
 
 // Plain prose (with or without "quoted dialogue") → beats of { desc, items, para, who }.
 export function proseBeats(text, addSpeaker) {
@@ -199,6 +297,7 @@ export function proseBeats(text, addSpeaker) {
         if (!/[A-Za-z]/.test(sent)) continue;
         const ns = namesIn(sent);
         if (ns.length) lastSubject = ns[0];
+        if (PANEL_RE.test(sent) || isDirection(sent)) { beats.push({ desc: sent.replace(PANEL_RE, '$2').trim() || sent, items: [], para: pi, who: ns.map(idOf) }); continue; }
         beats.push({ desc: sent, items: [{ type: 'caption', speaker: '', text: sent }], para: pi, who: ns.map(idOf) });
       }
     }
@@ -231,18 +330,8 @@ export function fitBeats(beats, n) {
     for (const [w, i] of order) { if (w < 9) break; const sp = splitBeat(bs[i]); if (sp) { bs.splice(i, 1, ...sp); done = true; break; } }
     if (!done) break;
   }
-  if (bs.length < n) {
-    const missing = n - bs.length, out = [];
-    // pauses go after dialogue/narration beats, spread through the story, never first
-    const slots = new Set(Array.from({ length: missing }, (_, k) => Math.max(0, Math.round(((k + 1) * bs.length) / (missing + 1)) - 1)));
-    let extra = missing - slots.size;
-    bs.forEach((b, i) => {
-      out.push(b);
-      if (slots.has(i)) out.push({ desc: '', items: [], silent: true, para: b.para, who: b.who });
-      while (i === bs.length - 2 && extra > 0) { out.push({ desc: '', items: [], silent: true, para: b.para, who: b.who }); extra--; }
-    });
-    return out.slice(0, n).map((b) => [b]);
-  }
+  // Still fewer story beats than slides: use fewer slides rather than padding with empty filler panels.
+  if (bs.length < n) return bs.map((b) => [b]);
   // too many: DP partition into n consecutive groups
   const M = bs.length, total = bs.reduce((a, b) => a + beatWords([b]), 0), avg = total / n;
   const cost = (i, j) => { // group bs[i..j)

@@ -41,6 +41,7 @@ await page.evaluate(async () => { localStorage.clear(); await new Promise((r) =>
 await page.reload({ waitUntil: 'networkidle' });
 await tapText('Use an example', 'button');
 await tapText('Next: get the ChatGPT prompt', 'button');
+await tapText('Use the grid prompt', 'button');
 await tapText('Next: upload the picture', 'button');
 
 // ---- A) grid upload ----
@@ -48,7 +49,7 @@ const gridCases = [
   ['IMG_0101.HEIC', /Found the 2 × 5/, 'grid: real HEIC (1536×1024) is read, detected and cut into 10 slides'],
   ['IMG_0102.JPG', /Found the 2 × 5/, 'grid: 14MP JPEG (4608×3072) is downscaled, detected and cut'],
   ['ChatGPT grid 1024x1536.png', /5 × 2 instead of 2 × 5/, 'grid: 1024×1536 PNG (ChatGPT drew 5 × 2) is detected and cut'],
-  ['single picture 1024x1536.png', /evenly|guessed|Found/, 'grid: a picture with no grid never hangs; falls back to a split you can adjust'],
+  ['single picture 1024x1536.png', /one picture/, 'grid: a picture with no grid never hangs, and the app asks before cutting it'],
 ];
 for (const [i, [f, want, label]] of gridCases.entries()) {
   const t0 = Date.now();
@@ -60,18 +61,16 @@ for (const [i, [f, want, label]] of gridCases.entries()) {
   if (!fc) { check(label + ' (picker did not open)', false); continue; }
   await fc.setFiles(asFile(f));
   await sleep(500);
-  const ok = await waitFor(async () => want.test(await statusText()) && !(await page.locator('.f-drop.busy').count()) && !/Cutting|Opening|Finding/.test(await statusText()) && (await nImgs()) === 10, T);
+  const ok = await waitFor(async () => want.test(await statusText()) && !(await page.locator('.f-drop.busy').count()) && !/Cutting|Opening|Finding/.test(await statusText()) && ((await nImgs()) === 10 || /one picture/.test(await statusText())), T);
   check(label, ok, `${await statusText()} · ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (i === 0) { await sleep(1500); const n = await drawnSlides(); check('grid: the slides actually show the cut pictures', n >= 10, `${n} drawn`); }
   await page.screenshot({ path: path.join(SHOTS, `A${i + 1}-${f.replace(/\W+/g, '-')}.png`) });
 }
 
 // ---- B) older flow: "Add pictures" with 10 iPhone photos at once ----
-await tapText('Prompt', '.f-steps button');
-await tapText('Use the slide-by-slide way', 'button');
-await page.evaluate(() => { const k = 'comic-free:project:v1'; const p = JSON.parse(localStorage.getItem(k)); p.pages.forEach((pg) => { pg.panels[0].img = null; }); p.view = 'pictures'; localStorage.setItem(k, JSON.stringify(p)); });
+await page.evaluate(() => { const k = 'comic-free:project:v1'; const p = JSON.parse(localStorage.getItem(k)); p.pages.forEach((pg) => { pg.panels[0].img = null; }); p.view = 'upload'; p.imageMode = 'separate'; localStorage.setItem(k, JSON.stringify(p)); });
 await page.reload({ waitUntil: 'networkidle' });
-let fc = await openPicker(page.locator('.f-drop').first());
+let fc = await openPicker(page.locator('label.f-several'));
 check('add pictures: tapping the upload area opens the photo picker', !!fc);
 if (fc) {
   check('add pictures: picker allows several photos', fc.isMultiple());
@@ -97,7 +96,7 @@ if (fc) {
 // a file that isn't a picture gives a clear message
 await page.evaluate(() => { const k = 'comic-free:project:v1'; const p = JSON.parse(localStorage.getItem(k)); p.pages[0].panels[0].img = null; localStorage.setItem(k, JSON.stringify(p)); });
 await page.reload({ waitUntil: 'networkidle' });
-fc = await openPicker(page.locator('.f-drop').first());
+fc = await openPicker(page.locator('label.f-several'));
 if (fc) {
   await fc.setFiles({ name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 not an image') });
   const msg = await waitFor(async () => /isn't a picture|couldn.t open/i.test(await page.locator('body').innerText()), 15000);

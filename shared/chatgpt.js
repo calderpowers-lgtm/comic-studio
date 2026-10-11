@@ -164,3 +164,33 @@ IN EVERY PANEL:
 THE PANELS:
 ${panels}`;
 }
+
+// ---------------- default: separate images, one per reply, in ONE chat ----------------
+export function seriesPrompt(project) {
+  const total = project.pages.length;
+  const castLines = project.characters.map((c) => `- ${c.name}: ${c.description}`).join('\n');
+  const panels = project.pages.map((pg, i) => `PANEL ${i + 1}: ${shortPanel(project, pg.panels[0])}`).join('\n');
+  return `I'm making a ${total}-panel comic for an Instagram carousel. Please draw it as ${total} SEPARATE images, ONE panel per image, ONE image per reply.
+
+Start now with PANEL 1 only. After each image, stop and wait. When I reply "next", draw the next panel as a new, separate image. Keep going until panel ${total}. Never put two panels in one image, and never make a grid or comic page.
+
+I attached style reference images. Copy only their DRAWING STYLE (line work, flat colours, simple faces, simple backgrounds). Ignore any text, speech boxes, page numbers or phone icons in them, and don't copy their characters.
+
+EVERY IMAGE:
+- One single picture, TALL PORTRAIT (1024×1536). Keep the important things in the middle so it can be cropped to 4:5.
+- NO text at all: no words, letters, numbers, speech bubbles, thought bubbles, captions, signs with writing, sound effects, signatures or watermarks. I add all the text myself.
+- Keep the TOP QUARTER simple and empty (plain sky, wall or foliage), with faces and important things lower down. My text box goes on top.
+- No panel border or frame.
+- Keep the characters IDENTICAL in every image: same face, hair, body and outfit.
+
+STYLE:
+${bibleLines(project.styleBible)}
+
+CHARACTERS:
+${castLines || '- (none)'}
+
+THE ${total} PANELS (draw them in this order, one per reply):
+${panels}
+
+Draw PANEL 1 now.`;
+}
