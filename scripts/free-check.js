@@ -50,6 +50,11 @@ const clip = () => page.evaluate(() => navigator.clipboard.readText());
 await page.goto(URL, { waitUntil: 'networkidle0' });
 await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('comic-free'); });
 await page.reload({ waitUntil: 'networkidle0' });
+// The slide-by-slide flow is now the secondary option: reach it from the default grid flow.
+await click('Use an example');
+await click('Next: get the ChatGPT prompt');
+await click('Use the slide-by-slide way');
+await click('Story', '.f-steps button');
 // 1 Story
 await click('Use the example');
 await shot('1-story.png', false);

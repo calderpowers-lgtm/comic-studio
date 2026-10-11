@@ -5,8 +5,8 @@ import FreeCanvas from './FreeCanvas.jsx';
 import { putImage, delImage, getImage, uid } from './storage.js';
 import { copyText, download, zipBlob, allSlideBlobs, pdfBlob, renderSlideBlob, slideName, shareFiles, slug } from './exporters.js';
 
-const REF_URLS = [1, 2, 3, 4].map((n) => new URL(`./assets/refs/ref-${n}.jpg`, import.meta.url).href);
-const EXAMPLE = `Neil, 52, short brown hair, short beard, grey suit, stands alone in his empty living room by the window.
+export const REF_URLS = [1, 2, 3, 4].map((n) => new URL(`./assets/refs/ref-${n}.jpg`, import.meta.url).href);
+export const EXAMPLE = `Neil, 52, short brown hair, short beard, grey suit, stands alone in his empty living room by the window.
 CAPTION: Neil, 52, stands by the window of his unfurnished home as the sun rises over the ocean.
 Neil stands on the empty beach at sunset holding a surfboard he has never used.
 CAPTION: He bought the surfboard eleven years ago.
@@ -26,9 +26,9 @@ CAPTION: They stayed until the tide went out.
 Neil eats soup alone in his empty living room.
 CAPTION: Neil went home and had some soup.`;
 
-const TYPE_LABEL = { caption: 'Narration box', speech: 'Speech', thought: 'Thought', shout: 'Shout', whisper: 'Whisper', sfx: 'Sound effect' };
+export const TYPE_LABEL = { caption: 'Narration box', speech: 'Speech', thought: 'Thought', shout: 'Shout', whisper: 'Whisper', sfx: 'Sound effect' };
 
-function CopyBtn({ text, label = 'Copy', done = 'Copied ✓', className = 'f-primary', onCopied, notify }) {
+export function CopyBtn({ text, label = 'Copy', done = 'Copied ✓', className = 'f-primary', onCopied, notify }) {
   const [ok, setOk] = useState(false);
   return (
     <button className={`${className} ${ok ? 'copied' : ''}`} onClick={async () => {
@@ -40,7 +40,7 @@ function CopyBtn({ text, label = 'Copy', done = 'Copied ✓', className = 'f-pri
 }
 
 // Convert a parsed plan into project pages (keeps existing pictures in slide order, and sheets by character id).
-function applyPlan(p, plan) {
+export function applyPlan(p, plan) {
   const oldPanels = p.pages.map((pg) => pg.panels[0]);
   const pages = plan.pages.map((pg, i) => {
     const src = pg.panels[0];
@@ -125,7 +125,7 @@ export function PlanStep({ project, update, notify }) {
   );
 }
 
-function SlideEditor({ project, update }) {
+export function SlideEditor({ project, update }) {
   const chars = project.characters;
   const editPanel = (pid, fn) => update((p) => ({ ...p, pages: p.pages.map((pg) => ({ ...pg, panels: pg.panels.map((x) => (x.id === pid ? fn(x) : x)) })) }));
   const setItem = (pid, iid, patch) => editPanel(pid, (x) => ({ ...x, lettering: x.lettering.map((l) => (l.id === iid ? { ...l, ...patch } : l)) }));

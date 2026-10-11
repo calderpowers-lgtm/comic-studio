@@ -1,15 +1,17 @@
 # Comic Studio
 
-## Free mode (default): uses your ChatGPT subscription, makes zero API calls
+## Free mode (default): one ChatGPT prompt, one upload, zero API calls
 
-Open http://localhost:5180 (or the static build). Everything runs in the browser: plans, prompts, uploads, lettering and export. Data is stored on the device (localStorage + IndexedDB).
+Live: https://calderpowers-lgtm.github.io/comic-studio/ (or http://localhost:5180 locally). Everything runs in the browser; the comic is stored on the device (localStorage + IndexedDB).
 
-1. **Story**: paste a script or idea and choose the slide count (default 10).
-2. **Plan slides**: either copy the prompt into ChatGPT and paste the JSON reply back (the parser tolerates code fences, chatty text, smart quotes, trailing commas and cut-off replies), or use the **Quick plan**, where `CAPTION:` / `NAME:` lines become slides.
-3. **Characters** (optional): copy a reference-sheet prompt per character and upload the result.
-4. **Draw in ChatGPT**: download the 4 style images (plus any sheets) as a zip, attach them to the first message of ONE ChatGPT chat, paste Slide 1's full prompt, then the short "Next panel" prompts. Copy-all is available.
-5. **Add pictures**: drop or pick all images at once. They fill empty slides oldest-first and are auto-cropped to 4:5. Swap with ← →, drag tiles, Replace, Frame sliders.
-6. **Text & export**: edit, move and re-aim the wavy boxes; download a PDF or PNG zip (or Share on phones).
+1. **Story**: paste the story in plain words and pick 4, 6, 8, 9 or 10 slides. Text in "quotes" becomes speech bubbles with the right speaker; everything else becomes narration. The story is split into slides instantly on the device (`shared/localplan.js`). If you want to change the split, **Edit slides** is optional.
+2. **Prompt**: tap **Share style images** (on a phone this opens the share sheet; elsewhere it downloads a zip) and **Copy ChatGPT prompt**. In one new ChatGPT chat, attach the 4 images, paste the prompt and send. ChatGPT draws all the panels in ONE image as an exact grid (`shared/grid.js` picks the grid, e.g. 10 = 2 rows × 5 columns on 1536×1024). For 8 to 10 slides there is an optional "Sharper pictures: 2 pictures" mode (10 = 6 + 4).
+3. **Upload**: add ChatGPT's picture. The app finds the white gutters by pixel analysis; if it can't see them, it splits evenly. It then cuts the panels, sharpens them lightly and upscales with Lanczos-3 to cover 1080×1350. Red cut lines can be dragged if detection is off, and **Frame** moves a picture inside its slide.
+4. **Finish**: edit, move and re-aim the wavy text boxes, then download a PDF or PNG zip (or Share on phones).
+
+The older "one ChatGPT picture per slide" flow is still there: on the Prompt step, tap "Use the slide-by-slide way".
+
+Tests: `node scripts/plan-check.js` (planner), `node scripts/standin-grid.js` + `node scripts/grid-check.js` (detection and slicing on stand-in grids), `node scripts/grid-flow-check.js <url>` (phone-size end-to-end), `node scripts/free-check.js` (older flow).
 
 **Hosting it as a static site:** `npm run build:static` creates `dist-static/` with relative paths and no server or API code. Upload that folder to any static host: Netlify Drop (drag the folder in), Cloudflare Pages, GitHub Pages or Vercel. It must be served over HTTPS for copy-to-clipboard and phone sharing. Each device keeps its own comics; there is no sync between phone and laptop.
 

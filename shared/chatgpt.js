@@ -100,3 +100,67 @@ export const panelPrompt = (project, i) => (i === 0 ? firstPanelPrompt(project, 
 export const allPrompts = (project) => project.pages.map((_, i) => `===== SLIDE ${i + 1} =====\n${panelPrompt(project, i)}`).join('\n\n');
 // For redoing one panel in a fresh chat: the full context + that panel.
 export const standalonePrompt = (project, i) => firstPanelPrompt(project, i);
+
+// ---------------- "one prompt, one upload" grid prompt ----------------
+const ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+function shortPanel(project, panel) {
+  const ch = (id) => project.characters.find((c) => c.id === id)?.name || id;
+  const who = (panel.characters || []).map(ch);
+  return `${panel.shot ? panel.shot.replace(/-/g, ' ') + ' shot' : 'Shot'}${panel.setting ? `, ${panel.setting}` : ''}. ${panel.description}${who.length ? ` (In it: ${who.join(', ')}.)` : ''}`.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The whole comic in ONE ChatGPT image (or one of two, when `sheets.length === 2`).
+ * sheets: from shared/grid.js sheetPlan(); k: which sheet this prompt is for.
+ */
+export function gridPrompt(project, sheets, k = 0) {
+  const sh = sheets[k];
+  const { rows, cols, count, start, canvas } = sh;
+  const total = project.pages.length;
+  const sizeWord = canvas === 'landscape' ? 'WIDE landscape image (3:2, 1536×1024)' : canvas === 'portrait' ? 'TALL portrait image (2:3, 1024×1536)' : 'SQUARE image (1024×1024)';
+  const castLines = project.characters.map((c) => `- ${c.name}: ${c.description}`).join('\n');
+  const blanks = rows * cols - count;
+  const panels = project.pages.slice(start, start + count).map((pg, i) => {
+    const r = Math.floor(i / cols), c = i % cols;
+    return `PANEL ${i + 1} (row ${r + 1}, ${ORD[c] || c + 1 + 'th'} from left): ${shortPanel(project, pg.panels[0])}`;
+  }).join('\n');
+  const intro = sheets.length > 1
+    ? (k === 0
+      ? `I'm making a ${total}-panel comic. You'll draw it as TWO images. This is IMAGE 1 of 2: panels 1–${count} of the story.`
+      : `Now IMAGE 2 of 2, panels ${start + 1}–${start + count} of the story. Exactly the same style, characters and layout rules as image 1.`)
+    : `Draw my whole ${count}-panel comic as ONE image: a grid of panels that I will cut apart into separate Instagram slides.`;
+  if (k > 0) {
+    return `${intro}
+
+LAYOUT: ONE ${sizeWord}. Exactly ${rows} row${rows > 1 ? 's' : ''} × ${cols} column${cols > 1 ? 's' : ''} = ${rows * cols} panels${blanks ? ` (leave the last ${blanks} cell${blanks > 1 ? 's' : ''} as plain white paper)` : ''}, all the same size and the same tall 4:5 portrait shape, separated by thin plain WHITE gutters with a white margin around the edge. Reading order left→right, top→bottom.
+No text anywhere (no words, numbers, speech bubbles, captions or sound effects). Keep the top quarter of every panel simple (plain sky, wall or foliage). Same characters, same faces, same outfits.
+
+${panels}`;
+  }
+  return `${intro}
+
+I attached style reference images. Copy only their DRAWING STYLE (line work, flat colours, simple faces, simple backgrounds). Ignore any text, speech boxes, page numbers or phone icons in them, and don't copy their characters.
+
+LAYOUT (very important, the image will be cut automatically):
+- ONE ${sizeWord}.
+- An exact grid: ${rows} row${rows > 1 ? 's' : ''} × ${cols} column${cols > 1 ? 's' : ''} = ${rows * cols} panels${blanks ? `; panels 1–${count} hold the story and the last ${blanks} cell${blanks > 1 ? 's stay' : ' stays'} plain white paper` : ''}.
+- Every panel is the SAME size and the SAME tall portrait shape (4:5, taller than wide). If space is left over, leave it as white margin outside the grid.
+- Panels are separated by thin, straight, plain WHITE gutters of equal width, with a thin white margin around the outside. Nothing crosses a gutter; nothing overlaps.
+- Reading order: left to right, then top to bottom. Panel 1 is top-left.
+- Do NOT draw panel numbers, titles or captions; the numbers below are only for you.
+
+STYLE:
+${bibleLines(project.styleBible)}
+
+CHARACTERS (keep them IDENTICAL in every panel: same face, hair, body and outfit):
+${castLines || '- (none)'}
+
+IN EVERY PANEL:
+- NO text at all: no words, letters, numbers, speech bubbles, thought bubbles, captions, signs with writing, sound effects, signatures or watermarks. I add all the text myself later.
+- Keep the TOP QUARTER of each panel simple and empty (plain sky, wall or foliage), with faces and important things in the lower three quarters. My text box goes on top.
+- Thick, slightly wobbly black ink outlines; completely flat colours; no shading, gradients, glow, blur or 3D look; simple sparse backgrounds.
+- Vary the camera (wide, medium, close-up) as described, like a real comic.
+
+THE PANELS:
+${panels}`;
+}
